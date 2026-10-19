@@ -1,7 +1,9 @@
+import asyncio
 from types import SimpleNamespace
 
 import httpx
 import pytest
+import uvicorn
 
 import lib.db
 import server.app as app_module
@@ -105,6 +107,27 @@ class TestListenEnvVars:
         monkeypatch.setenv("LISTEN_HOST", "")
         monkeypatch.setenv("LISTEN_PORT", "")
         assert app_module._resolve_listen_addr() == ("0.0.0.0", 1241)
+
+
+class TestDevLaunchLoopConfig:
+    """dev 启动契约：reload 模式必须配 uvicorn ``loop="none"``。
+
+    uvicorn 在 reload / 多 worker（use_subprocess）时强制 worker 走
+    SelectorEventLoop，Windows 上该循环不支持创建子进程，内嵌 Agent 会因此
+    连不上 Claude CLI（CLIConnectionError ← NotImplementedError）。
+    ``loop="none"`` 不覆写事件循环工厂，asyncio.run 退回平台默认策略循环
+    （Windows 为支持子进程的 ProactorEventLoop；POSIX 上与 uvicorn 默认选择
+    相同，无行为差异）。锁住该约定，uvicorn 升级若改变 ``none`` 语义在此显形。
+    """
+
+    def test_loop_none_keeps_platform_default_loop_in_reload_mode(self):
+        config = uvicorn.Config(app=app_module.app, loop="none", reload=True)
+        assert config.get_loop_factory() is None
+
+    def test_uvicorn_default_forces_selector_loop_in_reload_mode(self):
+        """对照组：uvicorn 默认配置在 reload 模式下确实强制 Selector 循环。"""
+        config = uvicorn.Config(app=app_module.app, reload=True)
+        assert config.get_loop_factory() is asyncio.SelectorEventLoop
 
 
 @pytest.mark.asyncio

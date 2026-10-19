@@ -3,10 +3,15 @@
 
 启动方式:
     cd ArcReel
-    uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --port 1241
+    uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --port 1241 --loop none
 
 注意：必须用 --reload-dir 限定监视目录，否则 watchfiles 会扫描
 node_modules / .venv / .git / .worktrees 等十几万个文件，单核 CPU 50%+。
+
+--loop none 不可省略：uvicorn 在 reload 模式下会给 worker 强制 SelectorEventLoop，
+Windows 上它无法创建子进程，内嵌 Agent 会起不了 Claude CLI（NotImplementedError）。
+none 交还给平台默认事件循环（Windows 是支持子进程的 ProactorEventLoop；
+POSIX 上与 uvicorn 的默认选择相同，无行为差异）。
 """
 
 import asyncio
@@ -980,4 +985,6 @@ if __name__ == "__main__":
     import uvicorn
 
     _host, _port = _resolve_listen_addr()
-    uvicorn.run(app, host=_host, port=_port, reload=True)
+    # loop="none"：reload 下 uvicorn 默认强制 SelectorEventLoop，Windows 上起不了
+    # 子进程（内嵌 Agent 连不上 Claude CLI）；交还平台默认循环（Windows 为 Proactor）。
+    uvicorn.run(app, host=_host, port=_port, reload=True, loop="none")
