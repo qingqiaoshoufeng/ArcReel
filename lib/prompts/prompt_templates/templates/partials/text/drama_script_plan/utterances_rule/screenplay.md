@@ -1,1 +1,3 @@
 把作者写下的台词与画外音**逐字照搬**为有序发声序列，按它们在分镜中的先后排列：台词（dialogue）的 speaker 填原文说话人（命名角色来自 characters_in_scene，群演照填原文称呼）；画外音 / 旁白写为 voiceover。不改写、不润色、不删减、不补写。分镜无口播则留空。
+
+**单一发声归属（硬约束）**：一个分镜的 utterances 只能全为 dialogue、全为 voiceover、或全为空——**禁止在同一分镜里混写 dialogue 与 voiceover**。混合发声会让视频模型把画外音演成角色台词或无主游声，与原生音轨混在一起无法分离，因此会被下游校验标 `needs_replan` 阻断生成。原文里同一时间既有角色台词又有旁白解说时，按发生先后拆成相邻的两个分镜：一个承载角色台词（dialogue），一个承载旁白（voiceover），各自选合适的 duration_seconds。

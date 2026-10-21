@@ -1133,6 +1133,7 @@ async def execute_video_task(
         voice_characters=(None if ctx.video.is_silent else (project.get("characters") or {}))
         if content_mode == "drama"
         else None,
+        style=str(project.get("style") or ""),
     )
     service_tier = payload.get("video_provider_settings", {}).get("service_tier", "default")
 

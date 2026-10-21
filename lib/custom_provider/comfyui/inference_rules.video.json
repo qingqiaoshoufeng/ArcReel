@@ -209,6 +209,8 @@
         "SVD_img2vid_Conditioning": 8,
         "EmptyLTXVLatentVideo": 32,
         "LTXVImgToVideo": 32,
+        "MiniMaxH3ImageToVideo": 32,
+        "MiniMaxH3ReferenceToVideo": 32,
         "Wan22ImageToVideoLatent": 32
       }
     },
@@ -219,6 +221,8 @@
         "SVD_img2vid_Conditioning": 8,
         "EmptyLTXVLatentVideo": 32,
         "LTXVImgToVideo": 32,
+        "MiniMaxH3ImageToVideo": 32,
+        "MiniMaxH3ReferenceToVideo": 32,
         "Wan22ImageToVideoLatent": 32
       }
     },
@@ -226,7 +230,9 @@
       "default": 4,
       "by_class_type": {
         "EmptyLTXVLatentVideo": 8,
-        "LTXVImgToVideo": 8
+        "LTXVImgToVideo": 8,
+        "MiniMaxH3ImageToVideo": 4,
+        "MiniMaxH3ReferenceToVideo": 4
       }
     }
   },

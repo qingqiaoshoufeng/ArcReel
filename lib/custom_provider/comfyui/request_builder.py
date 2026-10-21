@@ -37,6 +37,7 @@ from arcreel_market_core.comfyui.bindings import literal_of as _literal
 from arcreel_market_core.comfyui.bindings import positive_number as _positive_number
 from arcreel_market_core.comfyui.bindings import targets_of as _targets
 from arcreel_market_core.comfyui.workflow import is_link, node_inputs
+from lib.prompts.h3_prompt import is_h3_video_workflow, project_reference_prompt_to_h3, project_video_prompt_to_h3
 from lib.prompts.prompt_utils import append_avoid_text, split_avoid_lines
 
 from .capabilities import keeps_its_own_frame_count, size_is_fixed
@@ -114,13 +115,14 @@ def build_workflow(
     dropped = _apply_media(workflow, bindings, media or MediaInputs(), load_inference_rules(media_type))
 
     body, avoid_text = split_avoid_lines(prompt)
-    _write_all(workflow, _targets(bindings.get("prompt")), body)
-    _write_negative_prompt(workflow, bindings.get("negative_prompt"), avoid_text)
-    width, height = _write_size(workflow, bindings, aspect_ratio=aspect_ratio, resolution=resolution, media=media_type)
     # 图自己写着片长、而这份片长凑不出一档原生时长时不动帧数：端点对外说的正是「时长不由
     # ArcReel 驱动」（档位为空、界面只读），请求里那个秒数是规划层借的，不是用户选的。
     driven = None if keeps_its_own_frame_count(definition) else duration_seconds
     frames = _write_frames(workflow, bindings, duration_seconds=driven)
+    body = _project_h3_prompt(workflow, body, media, duration_seconds=duration_seconds)
+    _write_all(workflow, _targets(bindings.get("prompt")), body)
+    _write_negative_prompt(workflow, bindings.get("negative_prompt"), avoid_text)
+    width, height = _write_size(workflow, bindings, aspect_ratio=aspect_ratio, resolution=resolution, media=media_type)
     actual_seed = _write_seed(workflow, bindings, requested=seed, rng=rng or Random())
 
     return BuiltWorkflow(
@@ -132,6 +134,36 @@ def build_workflow(
         frames=frames,
         negative_prompt=avoid_text,
         dropped_nodes=dropped,
+    )
+
+
+def _project_h3_prompt(
+    workflow: dict[str, Any],
+    body: str,
+    media: MediaInputs | None,
+    *,
+    duration_seconds: float | None,
+) -> str:
+    """H3 端点的提示词正文在写入前投影成 H3 原生结构；非 H3 图原样返回。
+
+    关键帧指令由本次请求实际带上的首/尾帧决定（改图后没被删的那些），时长用于 FL2VA 的末帧
+    对齐秒数；无关键帧而带参考图（参考生视频）时，三段论机器文本投成 H3 原生三段式
+    （:func:`lib.prompts.h3_prompt.project_reference_prompt_to_h3`），无参考图的自由文本原样返回。
+    """
+    media = media or MediaInputs()
+    if not is_h3_video_workflow(workflow):
+        return body
+    if media.start_image is None and media.end_image is None:
+        if media.reference_images:
+            return project_reference_prompt_to_h3(
+                body, duration_seconds=duration_seconds if duration_seconds is not None else 0.0
+            )
+        return body
+    return project_video_prompt_to_h3(
+        body,
+        has_start_image=media.start_image is not None,
+        has_end_image=media.end_image is not None,
+        duration_seconds=duration_seconds if duration_seconds is not None else 0.0,
     )
 
 

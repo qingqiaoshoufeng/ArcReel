@@ -218,6 +218,7 @@ def render_storyboard_video_prompt(
     *,
     content_mode: str,
     voice_characters: dict[str, Any] | None,
+    style: str = "",
 ) -> str:
     """分镜生视频最终提示词文本的唯一出口。
 
@@ -227,6 +228,10 @@ def render_storyboard_video_prompt(
 
     文本形态下条目正文即模版的正文槽位；drama 的发声序列仍由脚本规划的
     ``utterances`` 决定——正文不承载台词，台词与声音风格由本函数按同一门控追加到正文之后。
+
+    ``style`` 是项目级画风约束（如 ``"硬核传统2D水墨，参考《雾山五行》风格"``）。非空时
+    作为顶部 ``Style`` 段注入到 prompt 正文，给视频模型一个明确的画风反向约束——LoRA 偏移
+    仍可能压过这一段，但比模型完全不知画风要好。
     """
 
     if isinstance(prompt, dict):
@@ -240,7 +245,15 @@ def render_storyboard_video_prompt(
                 prompt = build_drama_video_prompt_from_legacy_dialogue(prompt, characters=voice_characters)
     elif isinstance(prompt, str) and content_mode == "drama":
         prompt = _attach_drama_speech_text(prompt, item, characters=voice_characters)
-    return normalize_video_prompt(prompt)
+    text = normalize_video_prompt(prompt)
+    if style:
+        # Style 段作为 prompt 顶部约束：模型对开头的指引通常比中段更敏感，且 YAML 段开头
+        # 跟在 partial 模板正文里仍保持单段结构，不会破坏后续 Action/Dialogue 的渲染顺序。
+        # LoRA 权重级的画风偏移仍可能压过这一段，但总比让模型完全不知画风要好。
+        style_clean = style.strip()
+        if style_clean:
+            return f"Style: {style_clean}\n{text}"
+    return text
 
 
 def _attach_drama_speech_text(text: str, item: Mapping[str, Any] | None, *, characters: dict[str, Any] | None) -> str:

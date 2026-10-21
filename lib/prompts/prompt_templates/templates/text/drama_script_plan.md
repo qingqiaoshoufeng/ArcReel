@@ -100,6 +100,7 @@ protected: false
 - **scene_id**：`E{{ episode }}S{两位序号}` 格式（如 E{{ episode }}S01），按分镜顺序递增，不得用其他集号前缀。
 - **duration_seconds**：
   - 档位：{% if default_duration %}从支持的秒数档位（{{ durations }}）中按画面内容选择：默认 {{ default_duration }} 秒，打斗 / 大场面 / 情绪铺陈等画面可取更长档至 {{ max_duration }} 秒，不要默认选最短档{% else %}从支持的秒数档位（{{ durations }}）中按画面内容复杂度匹配合适时长（最长 {{ max_duration }} 秒），不强制默认值{% endif %}。
+  - 动作量匹配：先按**正常物理速度**估算该分镜动作链的自然耗时，选能容纳它的最小档位——微表情 / 单个小动作取短档（3-5 秒级），完整动作链（2-4 个节拍）才取长档（8-9 秒级）。不要靠拉长时长让画面「慢下来」：模型会把少量动作整体放慢填充时长，成片像慢放。
   - 口播下界：先估算该场 utterances（台词 + 画外音）念完约需的秒数（口播语速约 {{ speech_rate }} {{ speech_unit }}/秒），在上述档位里取**不低于**这个秒数的最接近档位。这是单向下界，画面 / 情绪留白可在此之上取更长档位；utterances 为空的分镜没有此下界；若口播估算已超过最长 {{ max_duration }} 秒，取最长档即可，不删减台词。
 {% if episode_target_duration %}
   - 单集目标：{{ partial("shared/episode_target_duration_rule") }}。
@@ -117,7 +118,9 @@ protected: false
 - **source_text**：逐字摘录本分镜对应的原文片段，尽量与原文一致、宁缺毋造（无把握可留空）。
 - **utterances**：{{ variant("text/drama_script_plan/utterances_rule", source_kind) }}
 
-每个分镜应为一个独立的视觉画面、可在指定时长内完成；避免在一个分镜内安排多个动作或画面切换。
+每个 utterance 的 `kind` 一经选定，同一分镜内所有 utterances 的 `kind` 必须相同——**禁止在同一分镜混写 dialogue 与 voiceover**（下游校验会标 `needs_replan` 阻断生成）。原文里既有角色台词又有旁白解说时，按发生先后拆成相邻的两个分镜，一个全为 dialogue、一个全为 voiceover，各自选合适的 duration_seconds。
+
+每个分镜是一个单一时空的连续镜头：不安排画面切换与转场（切镜交给相邻分镜），但要承载一条**完整的动作链**（起手—推进—收势，通常 2-4 个连贯节拍），按正常速度能自然铺满所选时长。单一微表情 / 一次视线移动撑不起一个分镜，并入相邻节拍；相邻分镜不重复同一戏剧动作（如同一个笑容不写两镜）。
 
 {{ partial("shared/new_assets_rule") }}
 {% if instructions %}

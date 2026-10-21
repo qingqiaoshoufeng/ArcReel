@@ -335,10 +335,11 @@ class TestScreenplaySourceKind:
         prompt = self._normalize_prompt("novel", episode_target_duration=90)
         section = prompt.split("- **duration_seconds**：\n", 1)[1].split("\n- **segment_break**", 1)[0]
         lines = section.split("\n")
-        assert [line.split("：", 1)[0] for line in lines] == ["  - 档位", "  - 口播下界", "  - 单集目标"]
+        assert [line.split("：", 1)[0] for line in lines] == ["  - 档位", "  - 动作量匹配", "  - 口播下界", "  - 单集目标"]
         assert "默认 8 秒" in lines[0]
-        assert "不低于" in lines[1]
-        assert "本集成片目标时长约 90 秒" in lines[2]
+        assert "正常物理速度" in lines[1]
+        assert "不低于" in lines[2]
+        assert "本集成片目标时长约 90 秒" in lines[3]
         assert "保存时会另有提示" not in prompt
 
         without_target = self._normalize_prompt("novel")

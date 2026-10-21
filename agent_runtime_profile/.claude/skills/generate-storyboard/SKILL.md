@@ -83,6 +83,68 @@ Avoid: 水印、多余文字、Logo
 - [ ] 场景视觉描述完整
 - [ ] 角色动作已指定
 
+## image_prompt 写作规则
+
+`image_prompt` 由 `generate-script` 写入剧本，本 skill 调用 `generate_storyboards`
+时由生成端按上面的 Prompt 模板渲染。生成端模板是固定的，**LLM 能控制的质量全在
+`image_prompt.scene` 与 `image_prompt.composition` 三字段**。写好这两个字段的规则：
+
+### 1. `scene`：场景画面描述
+
+按下列七维度逐项展开，**逐项可见**，不要写成剧情梗概：
+
+| 维度 | 写法 |
+|---|---|
+| 渲染风格开头词 | `Stylized 3D cartoon render` / `Live-action` / `2D-animated` / `claymation` / `watercolor`（与项目 `style` 一致） |
+| 镜头类型 | `medium-wide shot` / `close-up` / `extreme close-up` / `aerial` |
+| 主体外观与位置 | 角色登记名、年龄感、发型、服饰色、签名道具、当前站位（用 `@[登记名]` 指认资产） |
+| 环境与光照 | 场景空间、关键道具、光源（侧逆光 / 漫散射 / 霓虹绿 / 落日金） |
+| 动作瞬态 | 该镜冻结瞬间的具体动作（少年单膝蹲下、手提折纸船置于水洼上沿） |
+| 材质细节 | 皮肤次表面散射 / 湿润青石板 / 绒毛边缘（按风格锁挑） |
+| 屏内文字 | 招牌/字幕/霓虹文字用英文双引号包裹原文：`"营业中"` |
+
+### 2. `composition`：构图三字段
+
+```json
+"composition": {
+  "shot_type": "medium-wide shot",
+  "lighting": "side-backlit, soft fill",
+  "ambiance": "rain-after, low saturation, indigo bands"
+}
+```
+
+- `shot_type`：与 `scene` 开头的镜头类型一致；不要在两处冲突
+- `lighting`：具体光源 + 光质（`side-backlit, soft fill` 优于 `cinematic lighting`）
+- `ambiance`：色调 + 情绪基调（`rain-after, low saturation, indigo bands` 优于 `moody atmosphere`）
+
+### 3. 禁用与必须
+
+**禁用**：
+
+- 抽象形容词：`cinematic`、`beautiful`、`stunning`、`gorgeous`、`epic`、
+  `atmospheric`、`breathtaking`
+- 视频时长、宽高比（API 参数设置，不进 prompt）
+- BGM 描述、字幕/水印禁止项（生成端自动追加）
+- 否定句式（`no walls` 改成直接列出要保留的内容）
+
+**必须**：
+
+- 每镜首句先建立主体外观与场景布局，再写动作瞬态
+- `@[登记名]` 必须同时出现在条目的 `characters_in_*` / `scenes` / `props` /
+  `products_in_shot` 引用字段
+- 风格锁的渲染风格开头词每镜都引用一次
+
+### 4. 与 `video_prompt` 的分工
+
+`image_prompt` 描述**该镜冻结瞬间的画面**（分镜图）；`video_prompt` 描述
+**该镜向前发展的动作路径**（视频）。两份 prompt 主体外观、场景布局、风格锁一致，
+但内容不重叠：
+
+- `image_prompt.scene` 写冻结瞬态（少年单膝蹲下、手提折纸船置于水洼上沿）
+- `video_prompt.Action` 写动作链（少年蹲下 → 放纸船入水 → 纸船漂移 → 少年抬头望向巷尾）
+
+`video_prompt` 的写作规则见 [generate-video/references/h3_video_prompts.md](../generate-video/references/h3_video_prompts.md)。
+
 ## 错误处理
 
 结果结构与逐 ID 问题码见 `.claude/references/generation-results.md`。
