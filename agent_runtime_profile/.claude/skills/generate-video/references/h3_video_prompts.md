@@ -86,7 +86,24 @@ H3 文本编码器对抽象形容词响应弱。**禁止**：`cinematic`、`beau
 <动作起始>。<连续发展>。<结果或反应>。镜头<运镜>。
 ```
 
-### 2.5 屏内文字
+### 2.5 分镜间末态承接
+
+每个分镜的 `ending_state` 字段记录该镜结束时主体定格状态（位置 / 姿态 / 手中物件 / 表情 / 环境状态）。`ending_state` 不进 YAML 的 Action 段，只存在于剧本 JSON，供下一镜 action 起始状态衔接使用。
+
+非首镜且未标记 `segment_break` 的分镜，Action 首句应锚定上一镜 `ending_state` 的定格状态，再展开新动作。这与 I2VA 的首帧锚定模式并行：
+
+- **首帧锚定**（§2.4）：Action 首句锚定分镜图已有的风格 / 主体 / 构图
+- **末态承接**：Action 首句锚定上一镜 ending_state 的定格状态
+
+例如上一镜 `ending_state` 写「林清停在门口，右手扶门框」，本镜 Action 起始写：
+```
+[Shot 1] The woman releases the doorframe and turns toward the desk, ...
+```
+而非凭空从「端坐桌前」开始。
+
+`segment_break = true` 处断开承接链（新场景，无需衔接上一镜末态），`ending_state` 仍需写，供同段后续分镜承接。
+
+### 2.6 屏内文字
 
 画面里可见的招牌、字幕、霓虹文字用英文双引号包裹原文，不翻译：
 
@@ -222,5 +239,6 @@ non_diegetic_music: N/A
 - [ ] 无 `cinematic` / `beautiful` / `stunning` 等抽象词
 - [ ] 描述时长与编排秒数匹配
 - [ ] 分镜图生视频首句锚定分镜图主体外观与场景
+- [ ] `ending_state` 已写（首镜 / segment_break 可留空），下一镜 action 起始状态与之衔接
 - [ ] 对白逐字保留原文，Speaker 用登记名
 - [ ] 无时长数字、无宽高比、无 BGM 描述、无字幕/水印禁止项

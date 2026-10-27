@@ -179,6 +179,10 @@ def test_write_source_denied(policy: AgentAccessPolicy, tool: str, relative: str
         "drafts/episode_1/script_plan_segments.json",
         "drafts/episode_12/script_plan_segments.json",
         "drafts/episode_1/SCRIPT_PLAN_SEGMENTS.JSON",
+        "drafts/episode_1/script_plan_normalized_script.md",
+        "drafts/episode_12/script_plan_segments.md",
+        "drafts/episode_1/script_plan_reference_units.md",
+        "drafts/episode_1/SCRIPT_PLAN_NORMALIZED_SCRIPT.MD",
     ],
 )
 def test_write_formal_script_plan_denied(policy: AgentAccessPolicy, tool: str, relative: str) -> None:
@@ -191,6 +195,22 @@ def test_write_formal_script_plan_denied(policy: AgentAccessPolicy, tool: str, r
     assert reason
     assert "open_draft" in reason
     assert "promote_draft" in reason
+
+
+def test_legacy_script_plan_md_deny_message_points_to_legitimate_channels(policy: AgentAccessPolicy) -> None:
+    """旧版 .md 遗留稿同受写禁：它不是任何现行流程的产物位（读取层只读兼认、零写入者），
+    放开写就会成为 Agent 的直写逃生舱，落一份不过 schema、无人消费的内容与正式 .json 对不上。
+    拒绝文案须同时指向草稿通道与首次生成 / 整集重做的工具，不留「被拒后无路可走」。"""
+    cwd = _cwd(policy)
+    for relative in (
+        "drafts/episode_1/script_plan_normalized_script.md",
+        "drafts/episode_1/script_plan_segments.md",
+        "drafts/episode_1/script_plan_reference_units.md",
+    ):
+        allowed, reason = policy.check_path_access(str(cwd / relative), "Write", cwd, user_id=_USER_ID)
+        assert not allowed, f"{relative} 应被拒"
+        assert "generate_script_plan" in (reason or "")
+        assert "不是有效 script_plan" in (reason or "")
 
 
 def test_protected_script_plan_filenames_match_shared_constant() -> None:

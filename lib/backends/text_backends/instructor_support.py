@@ -1,12 +1,14 @@
 """Instructor 降级支持 — 原生 json_schema 通道不可用时的结构化输出降级链。
 
 链路为 TOOLS → MD_JSON：前者用 function calling 在 wire 层传 schema，后者把 schema 注入
-prompt。只有 wire 层失败才继续降档，校验类失败即判终局（见 :func:`_classify_mode_failure`）。
+prompt。只有 wire 层失败才继续降档，校验类失败即判终局（见 :func:`_classify_mode_failure`）；
+MiniMax 族例外，直接从 MD_JSON 档起步（见 :func:`_mode_chain_steps`）。
 OpenAI 兼容与 Ark 两个 backend 共用本模块，故降级链的调整在此一处生效。
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from enum import Enum
 from json import JSONDecodeError
@@ -29,6 +31,7 @@ from lib.backends.text_backends.base import (
     TokenParam,
     chat_completion_result,
     check_truncation,
+    is_minimax_model,
     merge_billed_usage,
     model_facing_response_model,
     strip_leading_think_block,
@@ -43,6 +46,7 @@ logger = logging.getLogger(__name__)
 # 结构化输出降级链：TOOLS 用 function calling 传 schema，是 OpenAI 兼容端点里约束最强、
 # 兼容面最广的一档；MD_JSON 纯靠 prompt 注入 schema，是最后兜底。native json_schema 档在
 # 各 backend 的 generate() 里，本模块只负责 native 之后的两档（见 docs/adr/0014）。
+# MiniMax 族不在此列，由 :func:`_mode_chain_steps` 对该族整体跳过 TOOLS 档。
 _STRUCTURED_MODE_CHAIN: tuple[Mode, ...] = (Mode.TOOLS, Mode.MD_JSON)
 
 # 上游不接受 tools 参数时的错误关键字，匹配前把错误文本转小写（各家代理的大小写不统一）。
@@ -67,11 +71,22 @@ _PARSE_FAILURE_TYPES: tuple[type[BaseException], ...] = (
 )
 
 
-def _mode_chain_steps() -> list[tuple[Mode, Mode | None]]:
-    """降级链的 (当前档, 下一档) 序列；下一档为 None 表示已是末档、无处可退。"""
+def _mode_chain_steps(model: str) -> list[tuple[Mode, Mode | None]]:
+    """降级链的 (当前档, 下一档) 序列；下一档为 None 表示已是末档、无处可退。
+
+    MiniMax 族直接从 MD_JSON 档起步、不进 TOOLS 档：其函数调用方言除了把数组值包成
+    ``{"item": …}``（:func:`_unwrap_minimax_item_arrays` 可归一化）外，还会把空数组压成
+    ``""``、单元素数组压成裸标量、数值/布尔字符串化——后三类携带「哪个字段该是数组/数值」
+    的 schema 信息，无 schema 的响应钩子无法归一化，而空数组与单元素数组在本项目的 schema
+    里无处不在，等于 TOOLS 档对 MiniMax 必败还多烧三次计费重试。MD_JSON 档不经函数调用
+    方言，模型在正文里直接写 JSON，实测可产出合规结构（M2.x / M3 / M3.1 同族）。
+    """
+    chain: tuple[Mode, ...] = (
+        (Mode.MD_JSON,) if is_minimax_model(model) else _STRUCTURED_MODE_CHAIN
+    )
     return [
-        (mode, _STRUCTURED_MODE_CHAIN[index + 1] if index + 1 < len(_STRUCTURED_MODE_CHAIN) else None)
-        for index, mode in enumerate(_STRUCTURED_MODE_CHAIN)
+        (mode, chain[index + 1] if index + 1 < len(chain) else None)
+        for index, mode in enumerate(chain)
     ]
 
 
@@ -268,6 +283,75 @@ def _strip_think_block_in_response(response: Any) -> None:
         message.content = stripped
 
 
+#: MiniMax 函数调用方言的数组包裹键（M2.x / M3 / M3.1 实测一致，见 :func:`_unwrap_minimax_item_arrays`）。
+_MINIMAX_ITEM_KEY = "item"
+
+
+def _unwrap_item_wrapped(data: Any) -> Any:
+    """递归解开 ``{"item": X}`` 单键包裹：MiniMax 在函数调用参数里常把数组值包成这个形状。"""
+    if isinstance(data, dict):
+        if len(data) == 1 and _MINIMAX_ITEM_KEY in data:
+            return _unwrap_item_wrapped(data[_MINIMAX_ITEM_KEY])
+        return {key: _unwrap_item_wrapped(value) for key, value in data.items()}
+    if isinstance(data, list):
+        return [_unwrap_item_wrapped(value) for value in data]
+    return data
+
+
+def _unwrap_item_wrapped_in_json_text(text: str) -> str | None:
+    """对一段 JSON 文本做 ``{"item": X}`` 解包；无变化或解析不出时返回 None（原文不动）。"""
+    try:
+        data = json.loads(text)
+    except (JSONDecodeError, TypeError, ValueError):
+        return None
+    unwrapped = _unwrap_item_wrapped(data)
+    if unwrapped == data:
+        return None
+    return json.dumps(unwrapped, ensure_ascii=False)
+
+
+def _unwrap_minimax_item_arrays(response: Any) -> None:
+    """Instructor ``completion:response`` 钩子（MiniMax 专用）：归一化函数调用方言的数组包裹。
+
+    MiniMax 的函数调用把「schema 里的数组字段」输出成 ``{"item": [...]}``（疑似把 JSON Schema
+    的 ``items`` 键误读成值的包裹键），M2.x / M3 / M3.1 实测一致，Pydantic 校验必然失败而
+    换 MD_JSON 档对该模型族并无必要。这里在解析前把 tool call 参数与正文 JSON 里的这类包裹
+    递归解开；非 JSON 文本与无包裹的合法输出原样保留。仅对 MiniMax 模型注册（见
+    :func:`_instructor_response_hook`），其他供应商零影响。
+    """
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        return
+    message = getattr(choices[0], "message", None)
+    if message is None:
+        return
+    for tool_call in getattr(message, "tool_calls", None) or []:
+        arguments = getattr(getattr(tool_call, "function", None), "arguments", None)
+        if not isinstance(arguments, str):
+            continue
+        normalized = _unwrap_item_wrapped_in_json_text(arguments)
+        if normalized is not None:
+            tool_call.function.arguments = normalized
+    content = getattr(message, "content", None)
+    if isinstance(content, str):
+        normalized = _unwrap_item_wrapped_in_json_text(content)
+        if normalized is not None:
+            message.content = normalized
+
+
+def _instructor_response_hook(model: str):
+    """按模型族装配 ``completion:response`` 钩子：MiniMax 加方言归一化，其余只剥思考块。"""
+
+    if not is_minimax_model(model):
+        return _strip_think_block_in_response
+
+    def hook(response: Any) -> None:
+        _strip_think_block_in_response(response)
+        _unwrap_minimax_item_arrays(response)
+
+    return hook
+
+
 def generate_structured_via_instructor(
     client,
     model: str,
@@ -287,7 +371,7 @@ def generate_structured_via_instructor(
     与原生结构化通道的截断行为同口径（见 docs/adr/0044）。
     """
     patched = instructor.from_openai(client, mode=mode)
-    patched.on("completion:response", _strip_think_block_in_response)
+    patched.on("completion:response", _instructor_response_hook(model))
     extra: dict = {token_param: max_tokens} if max_tokens is not None else {}
     try:
         result, completion = patched.chat.completions.create_with_completion(
@@ -323,7 +407,7 @@ async def generate_structured_via_instructor_async(
     与原生结构化通道的截断行为同口径（见 docs/adr/0044）。
     """
     patched = instructor.from_openai(client, mode=mode)
-    patched.on("completion:response", _strip_think_block_in_response)
+    patched.on("completion:response", _instructor_response_hook(model))
     extra: dict = {token_param: max_tokens} if max_tokens is not None else {}
     try:
         result, completion = await patched.chat.completions.create_with_completion(
@@ -413,7 +497,7 @@ def instructor_fallback_sync(
     if isinstance(response_schema, type):
         result: TextGenerationResult | None = None
         billed = TextGenerationResult(text="", provider=provider, model=model)
-        for mode, next_mode in _mode_chain_steps():
+        for mode, next_mode in _mode_chain_steps(model):
             try:
                 result = generate_structured_via_instructor(
                     client=client,
@@ -482,7 +566,7 @@ async def instructor_fallback_async(
     if isinstance(response_schema, type):
         result: TextGenerationResult | None = None
         billed = TextGenerationResult(text="", provider=provider, model=model)
-        for mode, next_mode in _mode_chain_steps():
+        for mode, next_mode in _mode_chain_steps(model):
             try:
                 result = await generate_structured_via_instructor_async(
                     client=client,

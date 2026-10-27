@@ -49,13 +49,24 @@ REFERENCE_VIDEO_PROMPT_AUTHORING_QUARANTINE_FILENAME = "prompt_authoring_referen
 DRAMA_SCRIPT_PLAN_QUARANTINE_FILENAME = "script_plan_normalized_script.invalid.json"
 NARRATION_SCRIPT_PLAN_QUARANTINE_FILENAME = "script_plan_segments.invalid.json"
 
-#: 对 Agent 写禁的正式 script_plan 文件名（见 ``AgentAccessPolicy._is_protected_formal_script_plan``）。
+#: 对 Agent 写禁的 script_plan 产物位文件名（见 ``AgentAccessPolicy._is_protected_formal_script_plan``）。
 #: 收的是文件名而非按项目变体解析的路径：写禁在会话装配前就要成立，而项目的 content_mode /
 #: generation_mode 是运行时可变的，按项目状态分叉判定会让改过模式的项目落进无人拦的缝里。
-#: 判据是「该变体的修改已有草稿通道可走」——写禁与替代通道成对出现，只拒不给出路会
-#: 把 Agent 卡死。三条路线的正式 script_plan 均已有草稿通道，故三个文件名全部在表内。
+#: 判据分两类：
+#: - 正式 ``.json`` 与 quarantine 草稿：「该变体的修改已有草稿通道可走」——写禁与替代通道成对
+#:   出现，只拒不给出路会把 Agent 卡死。三条路线的正式 script_plan 均已有草稿通道。
+#: - 旧版 ``.md`` 遗留稿：结构化前的自由文本稿，现行代码零写入者、读取层只读兼认。写禁堵的是
+#:   「Agent 把它当直写产物位的逃生舱」——写进去的内容不过 schema、没有任何侧消费，只会与
+#:   正式 ``.json`` 形成两份对不上的内容。不存在卡死问题：本来就不该写。
 AGENT_PROTECTED_SCRIPT_PLAN_FILENAMES: frozenset[str] = frozenset(
-    {SCRIPT_PLAN_FILENAMES["drama"], SCRIPT_PLAN_FILENAMES["narration"], REFERENCE_VIDEO_SCRIPT_PLAN_FILENAME}
+    {
+        SCRIPT_PLAN_FILENAMES["drama"],
+        SCRIPT_PLAN_FILENAMES["narration"],
+        REFERENCE_VIDEO_SCRIPT_PLAN_FILENAME,
+        *SCRIPT_PLAN_LEGACY_FILENAMES["drama"],
+        *SCRIPT_PLAN_LEGACY_FILENAMES["narration"],
+        REFERENCE_VIDEO_SCRIPT_PLAN_LEGACY_FILENAME,
+    }
 )
 
 

@@ -250,6 +250,20 @@ class TestImageToImage:
         images = [c for c in content if "image" in c]
         assert len(images) == b.max_reference_images == 9
 
+    async def test_qwen_image_2_1_ref_limit_10(self, tmp_path: Path):
+        download = AsyncMock()
+        refs = [_make_ref(tmp_path, f"r{i}.png") for i in range(12)]
+        with _generate_route(_img_response(), download) as route:
+            from lib.backends.image_backends.dashscope import DashScopeImageBackend
+
+            b = DashScopeImageBackend(api_key="sk", model="qwen-image-2.1-pro")
+            await b.generate(ImageGenerationRequest(prompt="p", output_path=tmp_path / "o.png", reference_images=refs))
+
+        content = request_json(only_request(route))["input"]["messages"][0]["content"]
+        images = [c for c in content if "image" in c]
+        # qwen-image-2.1 系官方支持 1~10 张参考图（qwen-image-3.0 才是 1~3 张）
+        assert len(images) == b.max_reference_images == 10
+
 
 class TestCapabilityGating:
     async def test_wan_pro_4k_i2i_raises(self, tmp_path: Path):

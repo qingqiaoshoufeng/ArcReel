@@ -94,6 +94,10 @@ MESSAGES = {
         "{prefix}: 估算说话时长 {spoken:.1f} 秒超过分镜时长 {duration} 秒逾 {tolerance:.0%}"
         "（容差上界 {budget:.1f} 秒），长对白可能说不完或语速畸快（仅提示，不阻塞保存）"
     ),
+    "val_segment_speech_overflow": (
+        "{prefix}: 估算口播时长 {spoken:.1f} 秒超过分镜时长 {duration} 秒逾 {tolerance:.0%}"
+        "（容差上界 {budget:.1f} 秒），原文可能念不完或语速畸快（仅提示，不阻塞保存）"
+    ),
     # ---- ad 分镜 ----
     "val_shot_duration_missing_zero": "{prefix}: 缺少 duration_seconds，将按 0 计入总时长",
     "val_shot_duration_out_of_range": (

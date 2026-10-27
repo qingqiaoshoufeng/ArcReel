@@ -22,6 +22,7 @@ from lib.backends.text_backends.base import (
 )
 from lib.backends.text_backends.instructor_support import (
     _PARSE_FAILURE_TYPES,
+    _instructor_response_hook,
     generate_structured_via_instructor,
     generate_structured_via_instructor_async,
     instructor_fallback_async,
@@ -977,6 +978,76 @@ class TestStructuredModeChainSync:
         assert self._modes(mock_gen) == [Mode.TOOLS, Mode.MD_JSON]
 
 
+class TestMiniMaxStructuredModeChain:
+    """MiniMax 族跳过 TOOLS 档、直接从 MD_JSON 档起步。
+
+    其函数调用方言除 ``{"item": …}`` 包裹（钩子可归一化）外，还会把空数组压成 ``""``、
+    单元素数组压成裸标量、数值/布尔字符串化——后三类无 schema 无法归一化，而空数组与
+    单元素数组在本项目的 schema 里无处不在，TOOLS 档对该族等于必败还多烧三次计费重试。
+    """
+
+    @staticmethod
+    def _call(model: str = "MiniMax-M3.1-Flash"):
+        return instructor_fallback_sync(
+            client=MagicMock(),
+            model=model,
+            messages=[{"role": "user", "content": "test"}],
+            response_schema=SampleModel,
+            provider="test-provider",
+        )
+
+    @staticmethod
+    async def _call_async(model: str = "MiniMax-M3.1-Flash"):
+        return await instructor_fallback_async(
+            client=AsyncMock(),
+            model=model,
+            messages=[{"role": "user", "content": "test"}],
+            response_schema=SampleModel,
+            provider="test-provider",
+        )
+
+    @staticmethod
+    def _modes(mock_gen) -> list[Mode]:
+        return [call.kwargs["mode"] for call in mock_gen.call_args_list]
+
+    def test_chain_skips_tools_and_starts_at_md_json(self):
+        """首档即 MD_JSON：不触碰必败的 TOOLS 档，直接产出合规结果。"""
+        sample = SampleModel(name="Alice", age=30)
+        with patch(
+            "lib.backends.text_backends.instructor_support.generate_structured_via_instructor",
+            return_value=_structured(sample.model_dump_json(), 50, 20),
+        ) as mock_gen:
+            result = self._call()
+
+        assert self._modes(mock_gen) == [Mode.MD_JSON]
+        assert result.text == sample.model_dump_json()
+
+    async def test_async_chain_skips_tools_and_starts_at_md_json(self):
+        """异步入口（生产路径）同口径。"""
+        sample = SampleModel(name="Bob", age=25)
+        with patch(
+            "lib.backends.text_backends.instructor_support.generate_structured_via_instructor_async",
+            return_value=_structured(sample.model_dump_json(), 50, 20),
+        ) as mock_gen:
+            result = await self._call_async()
+
+        assert self._modes(mock_gen) == [Mode.MD_JSON]
+        assert result.text == sample.model_dump_json()
+
+    def test_md_json_exhaustion_is_terminal(self):
+        """末档（MD_JSON）耗尽收敛为终局异常：链条对 MiniMax 只此一档。"""
+        with (
+            patch(
+                "lib.backends.text_backends.instructor_support.generate_structured_via_instructor",
+                side_effect=[_retry_exhausted(_validation_error())],
+            ) as mock_gen,
+            pytest.raises(StructuredOutputExhaustedError, match="结构化输出能力不足"),
+        ):
+            self._call()
+
+        assert self._modes(mock_gen) == [Mode.MD_JSON]
+
+
 class TestStructuredModeChainAsync:
     """TOOLS → MD_JSON 降级链（异步版），与同步版同口径。"""
 
@@ -1353,3 +1424,121 @@ class TestInstructorFallbackAsync:
         assert exc_info.value.provider == "async-provider"
         assert exc_info.value.model == "async-model"
         assert exc_info.value.output_tokens == 999
+
+
+class TestMiniMaxItemArrayNormalization:
+    """MiniMax 函数调用方言（数组被包成 ``{"item": ...}``）的归一化钩子。
+
+    M2.x / M3 / M3.1 实测：TOOLS 档参数里的数组字段被输出成 ``{"item": [...]}``，Pydantic
+    校验必然失败。该方言还有无 schema 无法归一化的形态（空数组压成 ``""``、单元素数组压成
+    裸标量、数值/布尔字符串化），故降级链对 MiniMax 整体跳过 TOOLS 档（见
+    ``TestMiniMaxStructuredModeChain``）；本钩子继续兜住 MD_JSON 档正文里出现的 item 包裹。
+    钩子只对 ``MiniMax-*`` 模型注册：其他供应商即使输出 ``{"item": ...}``（合法或非法）也
+    原样保留，不影响既有行为。
+    """
+
+    @staticmethod
+    def _tool_call_response(arguments: str) -> SimpleNamespace:
+        tool_call = SimpleNamespace(function=SimpleNamespace(arguments=arguments))
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[tool_call]))]
+        )
+
+    def test_minimax_hook_unwraps_item_wrapped_tool_arguments(self):
+        hook = _instructor_response_hook("MiniMax-M3.1-Flash")
+        response = self._tool_call_response(
+            json.dumps(
+                {
+                    "title": "雪中悍刀行",
+                    "characters_in_scene": {"item": ["徐凤年", "老黄"]},
+                    "props": {"item": "跛马"},
+                },
+                ensure_ascii=False,
+            )
+        )
+
+        hook(response)
+
+        arguments = json.loads(response.choices[0].message.tool_calls[0].function.arguments)
+        assert arguments["title"] == "雪中悍刀行"
+        assert arguments["characters_in_scene"] == ["徐凤年", "老黄"]
+        assert arguments["props"] == "跛马"
+
+    def test_non_minimax_hook_keeps_tool_arguments_untouched(self):
+        hook = _instructor_response_hook("gpt-5.4-mini")
+        wrapped = json.dumps({"characters_in_scene": {"item": ["徐凤年"]}}, ensure_ascii=False)
+        response = self._tool_call_response(wrapped)
+
+        hook(response)
+
+        assert response.choices[0].message.tool_calls[0].function.arguments == wrapped
+
+    def test_minimax_hook_leaves_non_json_arguments_untouched(self):
+        hook = _instructor_response_hook("MiniMax-M3.1-Flash")
+        response = self._tool_call_response("不是 JSON")
+
+        hook(response)
+
+        assert response.choices[0].message.tool_calls[0].function.arguments == "不是 JSON"
+
+    def test_minimax_hook_unwraps_item_wrapped_content(self):
+        hook = _instructor_response_hook("MiniMax-M3")
+        wrapped = json.dumps({"scenes": {"item": [{"scene_id": "E5S01"}]}}, ensure_ascii=False)
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=wrapped, tool_calls=None))]
+        )
+
+        hook(response)
+
+        assert json.loads(response.choices[0].message.content) == {"scenes": [{"scene_id": "E5S01"}]}
+
+    def test_minimax_hook_keeps_prose_content_untouched(self):
+        hook = _instructor_response_hook("MiniMax-M3")
+        prose = "这是正文，不是 JSON。"
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=prose, tool_calls=None))]
+        )
+
+        hook(response)
+
+        assert response.choices[0].message.content == prose
+
+    def test_instructor_tools_mode_survives_minimax_item_wrapping(self):
+        """端到端：TOOLS 档首轮回包数组，钩子归一化后 Instructor 校验一次通过。"""
+        from openai import OpenAI
+
+        class Narration(BaseModel):
+            characters_in_scene: list[str]
+
+        wrapped = json.dumps({"characters_in_scene": {"item": ["徐凤年", "老黄"]}}, ensure_ascii=False)
+        client = OpenAI(api_key="sk-test", base_url="https://proxy.invalid/v1")
+        client.chat.completions.create = MagicMock(
+            return_value=SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content=None,
+                            tool_calls=[
+                                SimpleNamespace(
+                                    id="call_1",
+                                    type="function",
+                                    function=SimpleNamespace(name="Narration", arguments=wrapped),
+                                )
+                            ],
+                        ),
+                        finish_reason="tool_calls",
+                    )
+                ],
+                usage=None,
+            )
+        )
+
+        result = generate_structured_via_instructor(
+            client=client,
+            model="MiniMax-M3.1-Flash",
+            messages=[{"role": "user", "content": "test"}],
+            response_model=Narration,
+            mode=Mode.TOOLS,
+        )
+
+        assert json.loads(result.text) == {"characters_in_scene": ["徐凤年", "老黄"]}

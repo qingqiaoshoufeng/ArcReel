@@ -101,6 +101,11 @@ MESSAGES = {
         "{tolerance:.0%} (trần dung sai {budget:.1f} giây); thoại dài có thể không kịp nói hoặc nghe quá nhanh "
         "(chỉ là thông báo, không chặn lưu)"
     ),
+    "val_segment_speech_overflow": (
+        "{prefix}: thời lượng thuyết minh ước tính {spoken:.1f} giây vượt thời lượng phân đoạn {duration} giây "
+        "quá {tolerance:.0%} (trần dung sai {budget:.1f} giây); văn bản gốc có thể không kịp đọc hoặc nghe quá nhanh "
+        "(chỉ là thông báo, không chặn lưu)"
+    ),
     # ---- cảnh quay quảng cáo ----
     "val_shot_duration_missing_zero": "{prefix}: thiếu duration_seconds, sẽ tính 0 vào tổng thời lượng",
     "val_shot_duration_out_of_range": (

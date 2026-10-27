@@ -45,9 +45,23 @@ DEFAULT_MODEL = "qwen-image-2.0"
 
 _IMAGE_ENDPOINT = "/services/aigc/multimodal-generation/generation"
 
-# 参考图上限：qwen 系 1~3 张、wan 系 0~9 张（docs 确权）
-_QWEN_REF_LIMIT = 3
+# 参考图上限按模型系列确权（docs/api-docs/providers/dashscope.md → 官方文档）：
+#   - wan 系：0~9 张
+#   - qwen-image-2.1 系：1~10 张（官方明列；qwen-image-3.0 系才是 1~3 张）
+#   - 其它 qwen（含 3.0、2.0、edit 系列）：1~3 张
 _WAN_REF_LIMIT = 9
+_QWEN_REF_LIMIT = 3
+_QWEN_IMAGE_2_1_REF_LIMIT = 10
+
+
+def _reference_limit_for(model: str) -> int:
+    """按模型名前缀返回该系列的参考图上限。"""
+    mid = model.lower()
+    if mid.startswith("wan"):
+        return _WAN_REF_LIMIT
+    if mid.startswith("qwen-image-2.1"):
+        return _QWEN_IMAGE_2_1_REF_LIMIT
+    return _QWEN_REF_LIMIT
 
 # 缺分辨率时各族默认短边。比例永远来自 aspect_ratio，由 arcreel_market_core.aspect_size 在各族像素约束内
 # 算精确比例（见 docs/adr/0011），不用带比例偏差的静态像素表：
@@ -128,13 +142,13 @@ class DashScopeImageBackend:
 
     @property
     def max_reference_images(self) -> int:
-        return _WAN_REF_LIMIT if self._is_wan else _QWEN_REF_LIMIT
+        return _reference_limit_for(self._model)
 
     @staticmethod
     def estimate_usage(facts: ImageRequestFacts) -> Usage:
         """预估只报张数：百炼图片按张统一价，尺寸不影响费用。"""
         refs = facts.reference_count
-        limit = _WAN_REF_LIMIT if facts.model.lower().startswith("wan") else _QWEN_REF_LIMIT
+        limit = _reference_limit_for(facts.model)
         return per_image_usage(output_images=1, input_images=None if refs is None else min(refs, limit))
 
     @with_retry_async(retry_if=should_retry_submit)

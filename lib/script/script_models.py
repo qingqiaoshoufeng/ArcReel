@@ -134,13 +134,21 @@ class ImagePrompt(BaseModel):
 
 
 class _VideoPromptCore(BaseModel):
-    """video_prompt 的画面层公共字段（动作 / 运镜 / 环境音）；dialogue 由具体变体决定是否携带。"""
+    """video_prompt 的画面层公共字段（动作 / 运镜 / 环境音 / 末态）；dialogue 由具体变体决定是否携带。"""
 
     model_config = _STRICT_CONFIG
 
     action: str = Field(description="该分镜时长内的动作描述；镜头运动由 camera_motion 承载")
     camera_motion: Annotated[CameraMotion, BeforeValidator(_normalize_camera_motion)] = Field(description="镜头运动")
     ambiance_audio: str = Field(description="环境音效（画内音）")
+    ending_state: str = Field(
+        default="",
+        description=(
+            "该分镜结束时主体姿态、位置、手中物件、表情、环境状态的定格快照；"
+            "用于下一镜 action 起始状态衔接。物理可观察的静态描述，不写情绪或意图。"
+            "首镜或 segment_break 镜可留空。"
+        ),
+    )
 
 
 class VideoPrompt(_VideoPromptCore):

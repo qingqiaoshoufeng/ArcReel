@@ -16,6 +16,7 @@ from lib.backends.text_backends.base import (
     TokenParam,
     chat_completion_result,
     check_truncation,
+    is_minimax_model,
     merge_billed_usage,
     resolve_schema,
     strip_leading_think_block,
@@ -97,6 +98,27 @@ class OpenAITextBackend:
         messages = await asyncio.to_thread(_build_messages, request)
         if request.response_schema and TextCapability.STRUCTURED_OUTPUT not in self._capabilities:
             logger.info("%s/%s 未声明原生结构化输出，直接走 Instructor", self._provider_name, self._model)
+            return await _instructor_fallback(
+                self._client,
+                self._model,
+                request,
+                messages,
+                provider=self._provider_name,
+                token_param=self._max_tokens_param,
+            )
+
+        if request.response_schema and is_minimax_model(self._model):
+            # MiniMax 端点对 response_format json_schema 只收不强制：请求返回 200，但模型输出
+            # 连字段名都可以与 schema 无关（实测 duration_seconds→duration、scene_description→action），
+            # 原生调用注定整段白烧一走才在复验处降级。与降级链对 MiniMax 跳过 TOOLS 档同一判据
+            # （instructor_support._mode_chain_steps），该族直接走 Instructor——对 MiniMax 从
+            # MD_JSON 档起步，实测可产出合规结构。正确性不受端点行为影响：Instructor 路径
+            # 按 response_schema 严格校验后才返回。
+            logger.info(
+                "%s/%s 端点不强制 json_schema 约束，直接走 Instructor 降级链",
+                self._provider_name,
+                self._model,
+            )
             return await _instructor_fallback(
                 self._client,
                 self._model,

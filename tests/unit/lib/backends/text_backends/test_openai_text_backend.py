@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -923,3 +924,67 @@ class TestTruncation:
         assert result.text == "partial"
         assert result.truncated is True
         assert any("被截断" in r.message for r in caplog.records)
+
+
+class _MixedEnumSchema(BaseModel):
+    """含非字符串枚举与字符串枚举的 schema：非 MiniMax 模型的原生通道原样透传。"""
+
+    duration_seconds: Literal[4, 8, 12, 15]
+    kind: Literal["dialogue", "voiceover"]
+
+
+class TestMiniMaxSkipsNativeStructuredChannel:
+    """MiniMax 族的结构化输出整体跳过原生 json_schema 通道，直接走 Instructor。
+
+    端点对 response_format json_schema 只收不强制：请求返回 200，但模型输出连字段名都可以
+    与 schema 无关（实测 duration_seconds→duration、scene_description→action），原生调用注定
+    整段白烧一走才在复验处降级。跳过后由 Instructor 按 response_schema 严格校验，正确性不受
+    端点行为影响。
+    """
+
+    async def test_minimax_structured_request_never_touches_native_channel(self):
+        instructor_result = _MixedEnumSchema(duration_seconds=4, kind="dialogue")
+        instructor_completion = MagicMock()
+        instructor_completion.usage = MagicMock()
+        instructor_completion.usage.prompt_tokens = 50
+        instructor_completion.usage.completion_tokens = 20
+        mock_patched = _make_instructor_client()
+        mock_patched.chat.completions.create_with_completion = AsyncMock(
+            return_value=(instructor_result, instructor_completion)
+        )
+
+        mock_client = AsyncMock()
+        with (
+            captured_openai_clients(mock_client),
+            patched_instructor_from_openai(return_value=mock_patched),
+        ):
+            from lib.backends.text_backends.openai import OpenAITextBackend
+
+            backend = OpenAITextBackend(api_key="test-key", model="MiniMax-M3.1-Flash")
+            result = await backend.generate(
+                TextGenerationRequest(prompt="Extract info", response_schema=_MixedEnumSchema)
+            )
+
+        mock_client.chat.completions.create.assert_not_awaited()
+        mock_patched.chat.completions.create_with_completion.assert_awaited_once()
+        assert result.text == instructor_result.model_dump_json()
+
+    async def test_non_minimax_structured_request_still_uses_native_channel(self):
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=_make_mock_response(json.dumps({"duration_seconds": 8, "kind": "dialogue"}))
+        )
+        with captured_openai_clients(mock_client):
+            from lib.backends.text_backends.openai import OpenAITextBackend
+
+            backend = OpenAITextBackend(api_key="test-key", model="gpt-5.4-mini")
+            result = await backend.generate(
+                TextGenerationRequest(prompt="Extract info", response_schema=_MixedEnumSchema)
+            )
+
+        mock_client.chat.completions.create.assert_awaited_once()
+        wire = mock_client.chat.completions.create.call_args[1]["response_format"]["json_schema"]["schema"]
+        # 原生通道的 wire schema 不做任何摘改：非字符串枚举原样透传（MiniMax 才有通道级适配）
+        assert wire["properties"]["duration_seconds"]["enum"] == [4, 8, 12, 15]
+        assert wire["properties"]["kind"]["enum"] == ["dialogue", "voiceover"]
+        assert result.text == json.dumps({"duration_seconds": 8, "kind": "dialogue"})

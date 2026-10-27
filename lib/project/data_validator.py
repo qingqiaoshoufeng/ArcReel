@@ -909,8 +909,14 @@ class DataValidator:
         warnings: list[ValidationMessage],
         *,
         project_dir: Path | None = None,
+        language: str | None = None,
+        speech_rate_override: float | None = None,
     ) -> None:
-        """验证 segments（旁白/解说）"""
+        """验证 segments（旁白/解说）。
+
+        ``language`` 为项目 ``source_language``（说话量上界 warning 的语速按此取，与字幕派生同口径）；
+        ``speech_rate_override`` 为项目级语速覆盖，None 即回退语言默认。
+        """
         if not isinstance(segments, list):
             errors.append(_m("val_field_must_be_array", field="segments"))
             return
@@ -935,6 +941,10 @@ class DataValidator:
 
             if not segment.get("novel_text"):
                 errors.append(_m("val_missing_field_at", prefix=prefix, field="novel_text"))
+
+            # 逐字口播（novel_text）对分镜时长的单向上界 warning：拆分侧没有台词容量校验，
+            # 写超了 TTS 必然吞词或抢拍，与 drama 说话量上界同口径（仅提示，不阻塞、不改写）。
+            self._warn_segment_speech_overflow(segment, prefix, language, speech_rate_override, warnings)
 
             chars_in_segment = segment.get("characters_in_segment")
             if chars_in_segment is None:
@@ -1155,6 +1165,40 @@ class DataValidator:
             warnings.append(
                 _m(
                     "val_scene_speech_overflow",
+                    prefix=prefix,
+                    spoken=spoken,
+                    duration=duration,
+                    tolerance=DRAMA_SPEECH_OVERFLOW_TOLERANCE,
+                    budget=budget,
+                )
+            )
+
+    @staticmethod
+    def _warn_segment_speech_overflow(
+        segment: dict[str, Any],
+        prefix: str,
+        language: str | None,
+        speech_rate_override: float | None,
+        warnings: list[ValidationMessage],
+    ) -> None:
+        """旁白分镜的逐字口播量（novel_text）估算时长超 ``duration ×（1 + 容差）`` 时仅 warn（单向上界，不阻塞）。
+
+        与 drama 的 :meth:`_warn_scene_speech_overflow` 同口径同容差；估算走同一把尺
+        （``estimate_spoken_seconds``），空 / 纯空白 novel_text 估 0 秒，duration 非正整数时跳过。
+        只警告「念不完」，不管「念得太少」。
+        """
+        duration = segment.get("duration_seconds")
+        if not isinstance(duration, int) or isinstance(duration, bool) or duration <= 0:
+            return
+        text = segment.get("novel_text")
+        if not isinstance(text, str):
+            return
+        spoken = estimate_spoken_seconds(text, language, speech_rate_override)
+        budget = duration * (1 + DRAMA_SPEECH_OVERFLOW_TOLERANCE)
+        if spoken > budget:
+            warnings.append(
+                _m(
+                    "val_segment_speech_overflow",
                     prefix=prefix,
                     spoken=spoken,
                     duration=duration,
@@ -1454,6 +1498,8 @@ class DataValidator:
                 errors,
                 warnings,
                 project_dir=artifact_root,
+                language=scene_language,
+                speech_rate_override=scene_speech_rate,
             )
         elif kind == "shots":
             shots = episode.get("shots", [])

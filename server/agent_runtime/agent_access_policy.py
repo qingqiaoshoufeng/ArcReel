@@ -798,13 +798,18 @@ class AgentAccessPolicy:
 
     @classmethod
     def _is_protected_formal_script_plan(cls, target: Path, bases: list[Path]) -> bool:
-        """命中受写禁的正式 script_plan（``drafts/episode_N/`` 下 ``AGENT_PROTECTED_SCRIPT_PLAN_FILENAMES``）。
+        """命中受写禁的 script_plan 产物位（``drafts/episode_N/`` 下的正式 ``.json``、quarantine
+        草稿与旧版 ``.md`` 遗留稿，见 ``AGENT_PROTECTED_SCRIPT_PLAN_FILENAMES``）。
 
-        与 ``scripts/*.json`` / ``project.json`` 同一条理由收进写禁：这些文件各有多条写入路径
-        （迁移读改写、Web 端保存、重生成 / 晋升写盘、Agent 修改），除 Agent 外都持
-        ``ProjectManager.file_lock`` 的同一把 per-path 锁；Agent 的 Write/Edit 跑在沙箱里、
-        取不到这把锁，直改与并发的 Web 端保存之间就是一个丢失更新窗口。改走
+        正式 ``.json`` 与 ``.invalid.json`` 草稿与 ``scripts/*.json`` / ``project.json`` 同一条理由
+        收进写禁：这些文件各有多条写入路径（迁移读改写、Web 端保存、重生成 / 晋升写盘、Agent 修改），
+        除 Agent 外都持 ``ProjectManager.file_lock`` 的同一把 per-path 锁；Agent 的 Write/Edit 跑在
+        沙箱里、取不到这把锁，直改与并发的 Web 端保存之间就是一个丢失更新窗口。改走
         ``open_draft`` → ``patch_draft`` → 晋升，写盘只发生在持锁的晋升侧。
+
+        旧版 ``.md`` 遗留稿是另一条理由：它不是任何现行流程的产物位（读取层只读兼认、零写入者），
+        放开写只会让 Agent 把它当直写逃生舱，落一份不过 schema、无人消费的内容与正式 ``.json``
+        对不上。
 
         按文件名匹配、不按项目变体解析：写禁在会话装配前就要成立，而项目的 content_mode /
         generation_mode 运行时可变。多认一两个本项目用不到的 script_plan 文件名无害——那些文件在
@@ -840,9 +845,10 @@ class AgentAccessPolicy:
 #: - ``edit_timeline``：「写入口收归」——剪辑时间线只能经剪辑时间线工具追加修订；两层同覆盖面。
 #: - ``source``：「写入口收归」——源文只能经上传与编辑源文的工具写入，改动按对齐重映射分集账本；两层同覆盖面。
 #: - ``formal_script_plan``：「写入口持锁」——正式 script_plan 另有多条持同一把 per-path 锁的写入
-#:   路径，Write/Edit 取不到锁，直改即丢失更新窗口。两层刻意不对称：sandbox 按 ``drafts/``
+#:   路径，Write/Edit 取不到锁，直改即丢失更新窗口；旧版 ``.md`` 遗留稿则本就零写入者，拦的是
+#:   把它当直写逃生舱。两层刻意不对称：sandbox 按 ``drafts/``
 #:   整目录 deny（清单在会话装配期一次性构造，集是运行时增删的，逐文件枚举必然落空；Bash
-#:   本就没有合法写入者），hook 拒正式 script_plan 与四类 revisioned quarantine 草稿。
+#:   本就没有合法写入者），hook 拒正式 script_plan、四类 revisioned quarantine 草稿与旧版 .md 遗留稿。
 AgentAccessPolicy.PROTECTED_WRITE_RULES = (
     ProtectedWriteRule(
         name="project_json",
@@ -879,14 +885,15 @@ AgentAccessPolicy.PROTECTED_WRITE_RULES = (
         name="formal_script_plan",
         matches=AgentAccessPolicy._is_protected_formal_script_plan,
         deny_message=(
-            "访问被拒绝：正式 script_plan 与待修复草稿（"
+            "访问被拒绝：正式 script_plan、待修复草稿与旧版 .md 遗留稿（"
             + " / ".join(sorted(AGENT_PROTECTED_SCRIPT_PLAN_FILENAMES))
             + "）不可用 Write/Edit 直改。"
-            "这些文件与 Web 端保存、迁移读改写、重生成共享一把文件锁，而 Write/Edit 取不到这把锁，"
-            "直改会与并发的保存互相丢失更新。"
+            "正式文件与草稿同 Web 端保存、迁移读改写、重生成共享一把文件锁，而 Write/Edit 取不到这把锁，"
+            "直改会与并发的保存互相丢失更新；旧版 .md 更不是有效 script_plan，写进去没有任何侧会消费。"
             f'请改用 MCP 工具——mcp__arcreel__{OPEN_DRAFT_TOOL_NAME}({{"episode_id": N, "doc_type": "..."}}) '
             "读取可编辑草稿，用 mcp__arcreel__patch_draft 提交修改，再用 "
-            f"mcp__arcreel__{PROMOTE_TOOL_NAME} 校验并晋升回正式文件。"
+            f"mcp__arcreel__{PROMOTE_TOOL_NAME} 校验并晋升回正式文件；首次生成或整集重做走 "
+            "mcp__arcreel__generate_script_plan。"
         ),
         sandbox_subpaths=("drafts",),
     ),

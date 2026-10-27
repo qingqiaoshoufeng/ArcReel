@@ -101,6 +101,11 @@ MESSAGES = {
         "{tolerance:.0%} (tolerance ceiling {budget:.1f}s); long dialogue may not fit or may sound rushed "
         "(informational only, saving is not blocked)"
     ),
+    "val_segment_speech_overflow": (
+        "{prefix}: estimated narration runs {spoken:.1f}s, exceeding the {duration}s segment duration by more "
+        "than {tolerance:.0%} (tolerance ceiling {budget:.1f}s); the source text may not fit or may sound rushed "
+        "(informational only, saving is not blocked)"
+    ),
     # ---- ad shots ----
     "val_shot_duration_missing_zero": "{prefix}: duration_seconds is missing, counted as 0 toward the total",
     "val_shot_duration_out_of_range": (

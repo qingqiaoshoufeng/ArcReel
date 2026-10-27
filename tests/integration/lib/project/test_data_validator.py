@@ -635,6 +635,48 @@ class TestDataValidator:
         fast = self._drama_episode_with_scene(tmp_path / "fast", scene, {"speech_rate_units_per_second": 20})
         assert not any("说话时长" in w for w in fast.warnings)
 
+    def _narration_episode_with_segment(self, tmp_path, segment_extra: dict, project_extra: dict | None = None):
+        # 构造一个最小 narration 剧集，segment 合并 segment_extra（用于针对性校验 novel_text 口播量）
+        project_dir = tmp_path / "projects" / "demo"
+        project = _project_payload("narration")
+        project.update(project_extra or {})
+        _write_json(project_dir / "project.json", project)
+        segment = {
+            "segment_id": "E2S01",
+            "duration_seconds": 8,
+            "novel_text": "原文",
+            "characters_in_segment": ["姜月茴"],
+            "scenes": ["古宅"],
+            "props": ["玉佩"],
+            "image_prompt": "img",
+            "video_prompt": "vid",
+        }
+        segment.update(segment_extra)
+        _write_json(
+            project_dir / "scripts" / "episode_2.json",
+            {"episode": 2, "title": "第二集", "content_mode": "narration", "segments": [segment]},
+        )
+        return validate_episode("demo", "episode_2.json", projects_dir=str(tmp_path / "projects"))
+
+    def test_validate_episode_narration_warns_when_novel_text_overflows_segment(self, tmp_path):
+        # 单向上界：逐字口播（novel_text）估算时长超分镜 duration × 容差 → 仅 warn，不阻塞保存。
+        # 拆分侧没有台词容量校验，这里是落盘前最后一道「念不完」提示。
+        long_text = "旁白" * 60  # 120 个汉字阅读单位，远超 8 秒分镜的容差上界
+        assert estimate_spoken_seconds(long_text, None) > 8 * (1 + DRAMA_SPEECH_OVERFLOW_TOLERANCE)
+        result = self._narration_episode_with_segment(tmp_path, {"novel_text": long_text})
+        assert result.valid, result.errors
+        assert any("口播时长" in w for w in result.warnings)
+
+    def test_validate_episode_narration_speech_overflow_uses_project_speech_rate(self, tmp_path):
+        # 项目级语速覆盖生效：同一段口播在快速覆盖下不再触发口播量上界 warning
+        text = "旁白" * 60
+        slow = self._narration_episode_with_segment(tmp_path / "slow", {"novel_text": text})
+        assert any("口播时长" in w for w in slow.warnings)
+        fast = self._narration_episode_with_segment(
+            tmp_path / "fast", {"novel_text": text}, {"speech_rate_units_per_second": 20}
+        )
+        assert not any("口播时长" in w for w in fast.warnings)
+
     def test_validate_project_rejects_out_of_range_speech_rate(self, tmp_path):
         # 项目级语速覆盖出现即须落在硬区间内；越界 / 非数字都是 error
         # 10**400 是 project.json 里合法但超出双精度范围的整数字面量，须报越界而非中断校验

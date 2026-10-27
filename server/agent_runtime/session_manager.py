@@ -158,6 +158,26 @@ class AgentStartupError(RuntimeError):
         return self.message
 
 
+def _is_conversation_not_found(exc: BaseException, stderr_collector: _StartupStderrCollector) -> bool:
+    """检测 SDK 因会话对话已不存在而 resume 失败的特定错误。
+
+    Claude Code 的本地对话存储可能因过期、清理或环境迁移而丢失，此时按
+    ``resume_id`` 启动的 SDK 连接会以 ``ResultError`` 退出，消息含
+    "No conversation found with session ID"。检测到此错误时可降级为以
+    ``session_id`` 预定身份开一个全新会话，而不是把会话整体标记为失败。
+    """
+    marker = "No conversation found"
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if marker in str(current):
+            return True
+        current = current.__cause__
+    stderr = stderr_collector.render()
+    return bool(stderr and marker in stderr)
+
+
 def _make_agent_startup_error(
     exc: BaseException,
     *,
@@ -1322,6 +1342,17 @@ class SessionManager:
         try:
             await actor.start()
         except Exception as exc:
+            if resumable and _is_conversation_not_found(exc, startup_stderr):
+                logger.warning(
+                    "会话的 Claude Code 对话已不存在，降级为新建会话 session_id=%s",
+                    session_id,
+                )
+                self.sessions.pop(session_id, None)
+                self._release_channel(session_id)
+                startup_stderr.stop()
+                return await self._connect_resumed_session(
+                    session_id, meta=meta, locale=locale, resumable=False
+                )
             sdk_stderr = startup_stderr.render()
             startup_error = _make_agent_startup_error(
                 exc,

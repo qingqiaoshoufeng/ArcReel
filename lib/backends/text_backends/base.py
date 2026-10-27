@@ -149,6 +149,17 @@ def strip_leading_think_block(text: str) -> str:
     return body[end + len(_THINK_CLOSE) :].lstrip()
 
 
+def is_minimax_model(model: str) -> bool:
+    """模型是否属 MiniMax 族（``MiniMax-`` 前缀）。
+
+    该族的 OpenAI 兼容端点有家族性 wire 怪癖，两处适配按同一判据分派：端点对
+    response_format json_schema 只收不强制（openai backend 对该族整体跳过原生通道），
+    函数调用方言压瘪数组值（见 Instructor 降级链对 MiniMax 跳过 TOOLS 档与
+    ``_unwrap_minimax_item_arrays``）。
+    """
+    return model.startswith("MiniMax-")
+
+
 def strip_json_code_fence(text: str) -> str:
     """剥掉包裹整个输出的 Markdown JSON 代码围栏，返回围栏内的 JSON 文本。
 

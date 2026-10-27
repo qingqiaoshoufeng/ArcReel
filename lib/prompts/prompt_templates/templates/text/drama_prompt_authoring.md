@@ -66,6 +66,7 @@ protected: false
 ## 视频提示词（video_prompt）——切换到「动作设计师」视角
 
 - **video_prompt.action**：{{ partial("shared/action_writing_guide") }}
+- **video_prompt.ending_state**：该分镜结束时主体定格状态快照（位置 / 姿态 / 手中物件 / 表情 / 环境状态），用于下一镜 action 起始衔接。物理可观察的静态描述，不写情绪或意图。首镜或 segment_break 可留空。
 - **video_prompt.ambiance_audio**：{{ partial("shared/ambiance_audio_writing_guide") }}
 
 # 创作目标

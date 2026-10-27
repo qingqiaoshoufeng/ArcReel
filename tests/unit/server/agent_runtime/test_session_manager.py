@@ -205,6 +205,68 @@ class TestSessionManager:
             await session_manager.close_session(meta.id)
 
     @pytest.mark.asyncio
+    async def test_resume_falls_back_to_fresh_when_conversation_not_found(
+        self, session_manager, meta_store, monkeypatch
+    ):
+        """会话对话已不存在时 resume 失败，降级为新建会话而非报启动错误。"""
+        from claude_agent_sdk import ProcessError
+
+        (session_manager.layout.projects_dir / "demo").mkdir(parents=True)
+        meta = await meta_store.create("demo", "sdk-conv-not-found")
+
+        async def _fake_env():
+            return {}
+
+        monkeypatch.setattr(
+            "server.agent_runtime.options_assembler.load_provider_env_overrides", _fake_env
+        )
+
+        call_count = [0]
+        created_clients: list[_FakeClaudeClient] = []
+
+        class _FailingThenOkClient(_FakeClaudeClient):
+            def __init__(self, options):
+                super().__init__(options)
+                self._connect_error: Exception | None = None
+
+            async def __aenter__(self):
+                if self._connect_error is not None:
+                    exc = self._connect_error
+                    self._connect_error = None
+                    raise exc
+                return await super().__aenter__()
+
+        def _track_client(*, options):
+            call_count[0] += 1
+            c = _FailingThenOkClient(options=options)
+            if call_count[0] == 1:
+                c._connect_error = ProcessError(
+                    f"No conversation found with session ID: {meta.id}",
+                    exit_code=1,
+                )
+            created_clients.append(c)
+            return c
+
+        with monkeypatch.context() as m:
+            m.setattr(sm_mod, "SDK_AVAILABLE", True)
+            m.setattr("server.agent_runtime.options_assembler.SDK_AVAILABLE", True)
+            m.setattr("server.agent_runtime.options_assembler.ClaudeAgentOptions", _FakeOptions)
+            m.setattr(sm_mod, "ClaudeSDKClient", _track_client)
+
+            managed = await session_manager.get_or_connect(meta.id)
+            await asyncio.sleep(0)
+
+            # 两次连接：第一次 resume 失败，第二次新建成功
+            assert len(created_clients) == 2
+            # 第一次尝试 resume
+            assert created_clients[0].options.kwargs.get("resume") == meta.id
+            # 第二次以 session_id 预定身份开新会话
+            assert created_clients[1].options.kwargs.get("session_id") == meta.id
+            assert created_clients[1].options.kwargs.get("resume") is None
+
+            await session_manager.close_session(meta.id)
+
+    @pytest.mark.asyncio
     async def test_stream_messages_waits_across_eviction_and_revival(self, session_manager, meta_store, monkeypatch):
         """订阅不复活冷会话；会话之后复活、被驱逐、再复活，同一订阅都照常收到广播。"""
         (session_manager.layout.projects_dir / "demo").mkdir(parents=True)
