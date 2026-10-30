@@ -1440,9 +1440,7 @@ class TestMiniMaxItemArrayNormalization:
     @staticmethod
     def _tool_call_response(arguments: str) -> SimpleNamespace:
         tool_call = SimpleNamespace(function=SimpleNamespace(arguments=arguments))
-        return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[tool_call]))]
-        )
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[tool_call]))])
 
     def test_minimax_hook_unwraps_item_wrapped_tool_arguments(self):
         hook = _instructor_response_hook("MiniMax-M3.1-Flash")
@@ -1484,9 +1482,7 @@ class TestMiniMaxItemArrayNormalization:
     def test_minimax_hook_unwraps_item_wrapped_content(self):
         hook = _instructor_response_hook("MiniMax-M3")
         wrapped = json.dumps({"scenes": {"item": [{"scene_id": "E5S01"}]}}, ensure_ascii=False)
-        response = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=wrapped, tool_calls=None))]
-        )
+        response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=wrapped, tool_calls=None))])
 
         hook(response)
 
@@ -1495,9 +1491,7 @@ class TestMiniMaxItemArrayNormalization:
     def test_minimax_hook_keeps_prose_content_untouched(self):
         hook = _instructor_response_hook("MiniMax-M3")
         prose = "这是正文，不是 JSON。"
-        response = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=prose, tool_calls=None))]
-        )
+        response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=prose, tool_calls=None))])
 
         hook(response)
 

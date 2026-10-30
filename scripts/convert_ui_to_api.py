@@ -26,11 +26,11 @@ ACTIVATE_DESPITE_BYPASS = {"LoadImage"}
 
 # 非真实输入的 widget 名 — 排除出 API inputs
 EXCLUDE_WIDGETS = {
-    "upload",                   # LoadImage 上传按钮
-    "control_after_generate",   # 采样器 UI-only
-    "Constant",                 # SetNode/GetNode 变量名
-    "guhai_ig",                 # 忽略多组孤海
-    "videopreview",             # VHS_VideoCombine 预览状态
+    "upload",  # LoadImage 上传按钮
+    "control_after_generate",  # 采样器 UI-only
+    "Constant",  # SetNode/GetNode 变量名
+    "guhai_ig",  # 忽略多组孤海
+    "videopreview",  # VHS_VideoCombine 预览状态
 }
 
 # 打断后设为字面值的字段（在 MiniMaxH3ReferenceToVideo node 265 上）
@@ -45,7 +45,7 @@ LITERAL_OVERRIDES = {
 
 
 def load_ui(path):
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -150,9 +150,7 @@ def determine_skipped(ui):
         nid = node["id"]
         ntype = node["type"]
         mode = node.get("mode", 0)
-        if ntype in ALWAYS_SKIP_TYPES:
-            skipped.add(nid)
-        elif mode == 4 and ntype not in ACTIVATE_DESPITE_BYPASS:
+        if ntype in ALWAYS_SKIP_TYPES or (mode == 4 and ntype not in ACTIVATE_DESPITE_BYPASS):
             skipped.add(nid)
     return skipped
 
@@ -201,8 +199,7 @@ def build_api_workflow(ui, links, resolve_link, skipped):
 
         # 3. 应用字面值覆盖（打断 prompt/width/height/length 连线）
         if nid in LITERAL_OVERRIDES:
-            for k, v in LITERAL_OVERRIDES[nid].items():
-                inputs[k] = v
+            inputs.update(LITERAL_OVERRIDES[nid])
 
         api_node = {"class_type": class_type, "inputs": inputs}
         title = node.get("title")
@@ -225,9 +222,11 @@ def find_reachable(api_workflow, output_node_ids):
         node = api_workflow.get(nid)
         if not node:
             continue
-        for v in node.get("inputs", {}).values():
-            if isinstance(v, list) and len(v) == 2 and isinstance(v[0], str):
-                queue.append(v[0])
+        queue.extend(
+            v[0]
+            for v in node.get("inputs", {}).values()
+            if isinstance(v, list) and len(v) == 2 and isinstance(v[0], str)
+        )
     return reachable
 
 
@@ -366,9 +365,7 @@ def main():
             "author": "YZ金鱼",
             "version": "1.0.0",
             "description": (
-                "MiniMax H3 参考图/视频→视频生成工作流。"
-                "含多模态参考输入（9图+3视频+3音频）、"
-                "自举采样+超分、显存优化。"
+                "MiniMax H3 参考图/视频→视频生成工作流。含多模态参考输入（9图+3视频+3音频）、自举采样+超分、显存优化。"
             ),
         },
         "media_type": "video",
@@ -394,10 +391,7 @@ def main():
     print("Bindings 汇总:")
     for key, targets in bindings.items():
         if targets:
-            desc = ", ".join(
-                f"{t.get('node')}:{t.get('input', 'node')} ({t.get('class_type')})"
-                for t in targets
-            )
+            desc = ", ".join(f"{t.get('node')}:{t.get('input', 'node')} ({t.get('class_type')})" for t in targets)
             print(f"  {key} ({len(targets)}): {desc}")
         else:
             print(f"  {key}: [] (不支持)")

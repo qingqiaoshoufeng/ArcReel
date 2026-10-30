@@ -5,10 +5,17 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from collections.abc import Callable, Generator
+import time
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
+
+# Windows 上目标文件的并发读句柄不带 FILE_SHARE_DELETE，os.replace 会以 PermissionError
+# (WinError 5) 失败——例如前端轮询项目详情时正读着 project.json。读者关句柄通常在毫秒级，
+# 按这份退避序列短暂重试即可跨过；序列耗尽后最后一次尝试把真实异常抛给调用方。
+# POSIX 上 rename 不受打开句柄影响，重试循环不会触发。
+_REPLACE_RETRY_DELAYS: tuple[float, ...] = (0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2)
 
 
 def load_json(path: Path) -> Any:
@@ -47,7 +54,27 @@ def load_json_or_none(path: Path) -> Any | None:
         return None
 
 
-def atomic_write_json(path: Path, data: Any) -> None:
+def replace_with_retry(
+    tmp_path: Path,
+    path: Path,
+    retry_delays: Sequence[float] = _REPLACE_RETRY_DELAYS,
+) -> None:
+    """``os.replace``，Windows 上目标被并发读句柄短暂占用时按 ``retry_delays`` 退避重试。"""
+    for delay in retry_delays:
+        try:
+            os.replace(tmp_path, path)
+            return
+        except PermissionError:
+            time.sleep(delay)
+    os.replace(tmp_path, path)
+
+
+def atomic_write_json(
+    path: Path,
+    data: Any,
+    *,
+    replace_retry_delays: Sequence[float] = _REPLACE_RETRY_DELAYS,
+) -> None:
     """同目录 tempfile + os.replace 原子写入 JSON。
 
     替换前 fsync 临时文件：否则断电时目标可能被换成尚未落盘的空文件或半截文件，
@@ -67,7 +94,7 @@ def atomic_write_json(path: Path, data: Any) -> None:
             json.dump(data, tmp, ensure_ascii=False, indent=2)
             tmp.flush()
             os.fsync(tmp.fileno())
-        os.replace(tmp_path, path)
+        replace_with_retry(tmp_path, path, replace_retry_delays)
         tmp_path = None
     finally:
         if tmp_path is not None:
@@ -75,7 +102,12 @@ def atomic_write_json(path: Path, data: Any) -> None:
                 tmp_path.unlink()
 
 
-def atomic_write_bytes(path: Path, data: bytes) -> None:
+def atomic_write_bytes(
+    path: Path,
+    data: bytes,
+    *,
+    replace_retry_delays: Sequence[float] = _REPLACE_RETRY_DELAYS,
+) -> None:
     """同目录 tempfile + ``os.replace`` 原子恢复文件字节。
 
     多文件补偿事务在后续写入失败时需要逐字恢复已经替换的旧文件；重新序列化 JSON 会改变
@@ -94,7 +126,7 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
             tmp.write(data)
             tmp.flush()
             os.fsync(tmp.fileno())
-        os.replace(tmp_path, path)
+        replace_with_retry(tmp_path, path, replace_retry_delays)
         tmp_path = None
     finally:
         if tmp_path is not None:

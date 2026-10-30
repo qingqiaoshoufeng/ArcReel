@@ -6,7 +6,7 @@ Prompt 工具函数
 
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, get_args
 
 import yaml
@@ -47,6 +47,10 @@ _AVOID_SEPARATOR = "，"
 # 正文里连续空行的塌缩上限：删掉 Avoid 行后留下的空行按此并成一个，与模版引擎对自身产生的连续
 # 换行所做的塌缩同一口径。
 _BLANK_RUN = re.compile(r"\n{3,}")
+
+# 分镜图生成的资产绑定段：``@[资产名]``。视频正文中同为措辞，角色名标记包裹前先还原成
+# 普通名字；H3 投影层（_strip_asset_marks）对未包标记的路径单独剥除。
+_ASSET_MARK_CONTENT = re.compile(r"@\[([^\[\]]*)\]")
 
 # 预设选项：真相源是 lib.script.script_models 的 Literal 词表，此处派生避免双写漂移
 SHOT_TYPES: list[str] = list(get_args(ShotType))
@@ -234,6 +238,7 @@ def render_storyboard_video_prompt(
     仍可能压过这一段，但比模型完全不知画风要好。
     """
 
+    binding_line = ""
     if isinstance(prompt, dict):
         prompt = strip_voice_profiles(prompt)
         if content_mode == "drama":
@@ -243,9 +248,13 @@ def render_storyboard_video_prompt(
                 # utterances 迁移前的存量剧本：load_script 按原始 JSON 读盘不过 pydantic，不会被
                 # DramaScene._migrate_legacy 自动补齐，台词仍留在 video_prompt.dialogue。
                 prompt = build_drama_video_prompt_from_legacy_dialogue(prompt, characters=voice_characters)
+            binding_line = _attach_character_binding_marks(prompt, item, characters=voice_characters)
     elif isinstance(prompt, str) and content_mode == "drama":
         prompt = _attach_drama_speech_text(prompt, item, characters=voice_characters)
     text = normalize_video_prompt(prompt)
+    if binding_line:
+        # 绑定行在 YAML 顶部：混合投影（首尾帧+角色图并存）按行拆出绑定号，其余正文按 YAML 投影。
+        text = f"{binding_line}\n{text}"
     if style:
         # Style 段作为 prompt 顶部约束：模型对开头的指引通常比中段更敏感，且 YAML 段开头
         # 跟在 partial 模板正文里仍保持单段结构，不会破坏后续 Action/Dialogue 的渲染顺序。
@@ -279,6 +288,57 @@ def _attach_drama_speech_text(text: str, item: Mapping[str, Any] | None, *, char
     if not pending:
         return text
     return f"{text.rstrip()}\n\n" + "\n".join(pending) + "\n"
+
+
+def _attach_character_binding_marks(
+    prompt: dict[str, Any],
+    item: Mapping[str, Any] | None,
+    *,
+    characters: dict[str, Any] | None,
+) -> str:
+    """分镜 H3 混合投影的绑定行注入出口。
+
+    按分镜 ``characters_in_scene`` × 角色资产派生出场角色序，把 ``prompt["action"]`` 里的
+    登记名就地包成 ``<名字>`` 标记，并返回前置绑定行 ``<名字>@图片N``（逻辑图号从 1 起）。
+    无出场角色、无角色资产或 ``characters`` 为 ``None``（真无声门控）时返回空串、正文不动。
+
+    图号是逻辑号：实际编号由请求构造层按携带的关键帧数前移（首帧占 Picture 1、尾帧占
+    Picture 2）；混合投影解析该行并做 `<Subject N>` 替换与 retention 汇总，非混合端点的
+    投影剥除该行。四个渲染出口共用本函数，产出逐字同构由此在结构上成立。
+    """
+    characters_map = normalize_asset_bucket(characters) if characters else {}
+    scene_names = item.get("characters_in_scene") if isinstance(item, Mapping) else None
+    if not characters_map or not isinstance(scene_names, list):
+        return ""
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for name in scene_names:
+        if not isinstance(name, str) or not name.strip():
+            continue
+        key = normalize_asset_name(name)
+        if key in seen or key not in characters_map:
+            continue
+        seen.add(key)
+        ordered.append(name.strip())
+    if not ordered:
+        return ""
+    action = prompt.get("action")
+    if isinstance(action, str) and action:
+        prompt["action"] = _wrap_character_marks(action, ordered)
+    return "、".join(f"<{name}>@图片{index + 1}" for index, name in enumerate(ordered)) + "。"
+
+
+def _wrap_character_marks(action: str, names: Sequence[str]) -> str:
+    """把 action 里的角色登记名包成 ``<名字>`` 标记。
+
+    先把 ``@[资产]`` 段还原成普通名字（那是分镜图生成的绑定语法，视频正文里同为措辞），
+    再按长名优先包标记，避免短名先吃掉长名的子串；这样同一角色在每个节拍里拿到同一标记，
+    投影层才能逐处替换成 `<Subject N>`。
+    """
+    text = _ASSET_MARK_CONTENT.sub(r"\1", action)
+    for name in sorted(names, key=len, reverse=True):
+        text = text.replace(name, f"<{name}>")
+    return text
 
 
 def split_avoid_lines(text: str) -> tuple[str, str]:

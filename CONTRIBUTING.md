@@ -34,7 +34,7 @@ uv run uvicorn server.app:app --reload --reload-dir server --reload-dir lib --po
 # 启动前端 (终端 2)
 cd frontend && pnpm dev
 
-# 访问 http://localhost:5173
+# 访问 http://localhost:15173
 ```
 
 ### 文档站

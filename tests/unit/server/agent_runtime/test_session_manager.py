@@ -217,9 +217,7 @@ class TestSessionManager:
         async def _fake_env():
             return {}
 
-        monkeypatch.setattr(
-            "server.agent_runtime.options_assembler.load_provider_env_overrides", _fake_env
-        )
+        monkeypatch.setattr("server.agent_runtime.options_assembler.load_provider_env_overrides", _fake_env)
 
         call_count = [0]
         created_clients: list[_FakeClaudeClient] = []
@@ -253,7 +251,7 @@ class TestSessionManager:
             m.setattr("server.agent_runtime.options_assembler.ClaudeAgentOptions", _FakeOptions)
             m.setattr(sm_mod, "ClaudeSDKClient", _track_client)
 
-            managed = await session_manager.get_or_connect(meta.id)
+            await session_manager.get_or_connect(meta.id)
             await asyncio.sleep(0)
 
             # 两次连接：第一次 resume 失败，第二次新建成功

@@ -37,7 +37,13 @@ from arcreel_market_core.comfyui.bindings import literal_of as _literal
 from arcreel_market_core.comfyui.bindings import positive_number as _positive_number
 from arcreel_market_core.comfyui.bindings import targets_of as _targets
 from arcreel_market_core.comfyui.workflow import is_link, node_inputs
-from lib.prompts.h3_prompt import is_h3_video_workflow, project_reference_prompt_to_h3, project_video_prompt_to_h3
+from lib.prompts.h3_prompt import (
+    is_h3_video_workflow,
+    project_hybrid_prompt_to_h3,
+    project_reference_prompt_to_h3,
+    project_video_prompt_to_h3,
+    strip_h3_only_marks,
+)
 from lib.prompts.prompt_utils import append_avoid_text, split_avoid_lines
 
 from .capabilities import keeps_its_own_frame_count, size_is_fixed
@@ -152,13 +158,21 @@ def _project_h3_prompt(
     """
     media = media or MediaInputs()
     if not is_h3_video_workflow(workflow):
-        return body
+        return strip_h3_only_marks(body)
     if media.start_image is None and media.end_image is None:
         if media.reference_images:
             return project_reference_prompt_to_h3(
                 body, duration_seconds=duration_seconds if duration_seconds is not None else 0.0
             )
         return body
+    if media.reference_images:
+        # 文武双全式混合：首尾帧占参考图槽 0/1，角色图占后续槽；绑定号由混合投影前移。
+        return project_hybrid_prompt_to_h3(
+            body,
+            has_start_image=media.start_image is not None,
+            has_end_image=media.end_image is not None,
+            duration_seconds=duration_seconds if duration_seconds is not None else 0.0,
+        )
     return project_video_prompt_to_h3(
         body,
         has_start_image=media.start_image is not None,

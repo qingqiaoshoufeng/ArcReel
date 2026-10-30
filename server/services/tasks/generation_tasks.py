@@ -1094,7 +1094,33 @@ async def execute_video_task(
         )
         return resolver, start, end
 
+    def _resolve_character_reference_images() -> list[Path]:
+        """出场角色设定图 → H3 混合投影的角色锁定参考图；缺设定图的角色跳过。
+
+        判定要读盘（is_file），整体放进工作线程；上限按请求事实裁剪，端点没声明
+        参考图上限（None）时不裁剪，构造层与上传层还会按端点槽位兜底。
+        """
+        characters = project.get("characters")
+        scene_names = item.get("characters_in_scene") if isinstance(item, dict) else None
+        if not isinstance(characters, Mapping) or not isinstance(scene_names, list):
+            return []
+        paths: list[Path] = []
+        for name in scene_names:
+            entry = characters.get(name) if isinstance(name, str) else None
+            sheet = entry.get("character_sheet") if isinstance(entry, Mapping) else None
+            if not isinstance(sheet, str) or not sheet.strip():
+                continue
+            candidate = project_path / sheet
+            if candidate.is_file():
+                paths.append(candidate)
+        return paths
+
     currency_resolver, storyboard_file, end_image = await asyncio.to_thread(_resolve_usable_inputs)
+    character_reference_images = await asyncio.to_thread(_resolve_character_reference_images)
+    if request_facts.max_reference_images == 0:
+        character_reference_images = []
+    elif request_facts.max_reference_images is not None:
+        character_reference_images = character_reference_images[: request_facts.max_reference_images]
     aspect_ratio = get_aspect_ratio(project, "videos")
     seed = payload.get("seed")
 
@@ -1115,6 +1141,8 @@ async def execute_video_task(
             voice_characters=(None if ctx.video.is_silent else project.get("characters"))
             if content_mode == "drama"
             else None,
+            characters_in_scene=item.get("characters_in_scene") if content_mode == "drama" else None,
+            reference_images=tuple(character_reference_images),
         ).digest
 
     def _current_visual_basis_digest() -> str:
@@ -1330,6 +1358,7 @@ async def execute_video_task(
             resource_id=resource_id,
             start_image=provider_start_image,
             end_image=provider_end_image,
+            reference_images=character_reference_images or None,
             aspect_ratio=aspect_ratio,
             duration_seconds=duration_seconds,
             resolution=resolution,

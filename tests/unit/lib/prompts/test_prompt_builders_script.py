@@ -335,7 +335,12 @@ class TestScreenplaySourceKind:
         prompt = self._normalize_prompt("novel", episode_target_duration=90)
         section = prompt.split("- **duration_seconds**：\n", 1)[1].split("\n- **segment_break**", 1)[0]
         lines = section.split("\n")
-        assert [line.split("：", 1)[0] for line in lines] == ["  - 档位", "  - 动作量匹配", "  - 口播下界", "  - 单集目标"]
+        assert [line.split("：", 1)[0] for line in lines] == [
+            "  - 档位",
+            "  - 动作量匹配",
+            "  - 口播下界",
+            "  - 单集目标",
+        ]
         assert "默认 8 秒" in lines[0]
         assert "正常物理速度" in lines[1]
         assert "不低于" in lines[2]

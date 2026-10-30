@@ -1350,9 +1350,7 @@ class SessionManager:
                 self.sessions.pop(session_id, None)
                 self._release_channel(session_id)
                 startup_stderr.stop()
-                return await self._connect_resumed_session(
-                    session_id, meta=meta, locale=locale, resumable=False
-                )
+                return await self._connect_resumed_session(session_id, meta=meta, locale=locale, resumable=False)
             sdk_stderr = startup_stderr.render()
             startup_error = _make_agent_startup_error(
                 exc,

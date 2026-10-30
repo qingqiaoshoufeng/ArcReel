@@ -129,26 +129,18 @@ stale 产物照常可预览、可导出、可参与成片，服务端会复用�
 
 ### H3 端点的写作规则
 
-项目视频端点配置为 MiniMax H3 时，`video_prompt` 必须按
-[references/h3_video_prompts.md](./references/h3_video_prompts.md) 写作：
+项目视频端点配置为 MiniMax H3 时，生成并保存的 `video_prompt` 必须直接写成
+[references/h3_video_prompts.md](./references/h3_video_prompts.md) 定义的六字段格式，不能写 YAML 等待执行期转换：
 
-- **必须 YAML 结构**：`Voice_Profiles` / `Action` / `Camera_Motion` /
-  `Ambiance_Audio` / `Dialogue`。`lib/prompts/h3_prompt.py` 只识别 YAML，
-  自由散文式 prompt 不投影成 H3 原生三段式，直通模型，质量显著下降。
-- **`Camera_Motion` 必须在词表内**：Static / Pan Left / Pan Right / Tilt Up /
-  Tilt Down / Zoom In / Zoom Out / Push In / Pull Out / Truck Left / Truck Right /
-  Pedestal Up / Pedestal Down / Orbit / Tracking Shot / Shake。词表外运镜不投影。
-- **禁用抽象词**：`cinematic`、`beautiful`、`stunning`、`gorgeous`、`epic`，
-  改用具体视听细节（镜头类型 / 材质 / 光源 / 动作动词）。
-- **时长对齐**：描述铺满编排秒数，多镜时所有 cut 时间相加 ≤ 视频总时长。
-- **关键帧衔接（I2VA）**：分镜图是 [Shot 1] 的 0.00 秒首帧，`Action` 首句先锚定
-  分镜图已有的风格、主体、构图、场景，再描述"首帧锚定 → 动作起始 → 连续发展 →
-  结果或反应"的路径。
-- **不要写**：视频时长（自动追加声明句）、宽高比（API 参数）、BGM 描述
-  （ArcReel 禁 BGM，`non_diegetic_music` 恒为 N/A）、字幕/水印禁止项（生成端自动追加）。
+- 按 `subject_definitions`、`summary`、`retention_analysis`、`detailed_description`、`overall_soundscape`、`non_diegetic_music` 顺序输出；无可靠来源的字段写 `N/A`，不虚构主体、身份或外观。
+- 参考生视频按参考图实际发送顺序建立 `<Subject N>` 与 `<Picture N>` 绑定；只给正文中显式引用的主体生成 retention 镜头列表。
+- `detailed_description` 保留 `[Shot N]` 分镜，主体和图片分别使用尖括号标签 `<Subject N>`、`<Picture N>`；中文对白使用 `<d>[Chinese] 台词</d>`。
+- 分镜图生视频把画面和动作写入 `summary`、`detailed_description`；首尾帧是完整画面，不据此推断主体身份。
+- 声音写入 `overall_soundscape`；除用户明确要求外，`non_diegetic_music` 为 `N/A`。
+- **禁用抽象词**：`cinematic`、`beautiful`、`stunning`、`gorgeous`、`epic`，改用具体视听细节。
+- 描述铺满编排时长；不要重复写视频时长、宽高比或字幕/水印禁止项。
 
-完整字段定义、写作规则、自检清单与示例见
-[references/h3_video_prompts.md](./references/h3_video_prompts.md)。
+六字段是正式剧本中存储和预览的提示词格式。参考图编号必须与本次请求实际发送顺序一致。
 
 > Veo 端点的散文式写作规则保留在 [references/veo_prompts.md](./references/veo_prompts.md)，
 > 仅在项目视频端点配置为 Veo 时参考；H3 项目不要按 Veo 散文式写 `video_prompt`。

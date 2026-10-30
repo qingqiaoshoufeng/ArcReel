@@ -384,3 +384,25 @@ class TestRenderStoryboardVideoPrompt:
     def test_non_drama_text_form_gets_no_speech_sections(self):
         rendered = self._render("镜头缓缓推近", content_mode="narration")
         assert "Line:" not in rendered
+
+    def test_character_binding_line_leads_structured_drama_prompt(self):
+        """出场角色 × 角色资产 → 绑定行前置、action 登记名包 ``<名字>`` 标记（H3 混合投影输入形态）。"""
+        item = {
+            "utterances": [{"kind": "dialogue", "speaker": "王", "text": "你来了。"}],
+            "characters_in_scene": ["王", "未登记角色"],
+        }
+        rendered = render_storyboard_video_prompt(
+            {"action": "王转身离开", "camera_motion": "Static", "ambiance_audio": "风声"},
+            item,
+            content_mode="drama",
+            voice_characters=self.CHARACTERS,
+        )
+
+        assert rendered.startswith("<王>@图片1。\n")
+        assert "Action: <王>转身离开" in rendered
+        assert "@图片1、@图片2" not in rendered
+
+    def test_structured_drama_prompt_without_scene_characters_has_no_binding_line(self):
+        rendered = self._render({"action": "起身", "camera_motion": "Static", "ambiance_audio": ""})
+        assert not rendered.startswith("<")
+        assert "Action: 起身" in rendered

@@ -63,6 +63,7 @@ def _reference_limit_for(model: str) -> int:
         return _QWEN_IMAGE_2_1_REF_LIMIT
     return _QWEN_REF_LIMIT
 
+
 # 缺分辨率时各族默认短边。比例永远来自 aspect_ratio，由 arcreel_market_core.aspect_size 在各族像素约束内
 # 算精确比例（见 docs/adr/0011），不用带比例偏差的静态像素表：
 #   - qwen 融合系列 native 默认 2048²；wan 默认 2K 档；编辑系列由 max_long_edge 自然收口。

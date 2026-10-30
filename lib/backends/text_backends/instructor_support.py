@@ -81,13 +81,8 @@ def _mode_chain_steps(model: str) -> list[tuple[Mode, Mode | None]]:
     里无处不在，等于 TOOLS 档对 MiniMax 必败还多烧三次计费重试。MD_JSON 档不经函数调用
     方言，模型在正文里直接写 JSON，实测可产出合规结构（M2.x / M3 / M3.1 同族）。
     """
-    chain: tuple[Mode, ...] = (
-        (Mode.MD_JSON,) if is_minimax_model(model) else _STRUCTURED_MODE_CHAIN
-    )
-    return [
-        (mode, chain[index + 1] if index + 1 < len(chain) else None)
-        for index, mode in enumerate(chain)
-    ]
+    chain: tuple[Mode, ...] = (Mode.MD_JSON,) if is_minimax_model(model) else _STRUCTURED_MODE_CHAIN
+    return [(mode, chain[index + 1] if index + 1 < len(chain) else None) for index, mode in enumerate(chain)]
 
 
 def _output_tokens_from_incomplete(exc: IncompleteOutputException) -> int | None:

@@ -59,19 +59,31 @@ def build_storyboard_video_visual_basis(
     utterances: object,
     has_utterances: bool,
     voice_characters: object,
+    characters_in_scene: object = None,
+    reference_images: Sequence[Path] = (),
 ) -> ArtifactBasis:
-    """Describe the request facts that determine one storyboard video prompt and frames."""
+    """Describe the request facts that determine one storyboard video prompt and frames.
+
+    ``characters_in_scene`` 与 ``reference_images`` 支撑 H3 混合投影（角色绑定行进提示词、
+    角色图进参考图槽）：四者任一变化都会改变实发请求，必须进摘要，否则预演与实发各算各的。
+    """
 
     # 与执行路径共用同一渲染出口：摘要收的就是实发文本本身，两者不各写一份。
+    render_item: dict[str, object] = {}
+    if has_utterances:
+        render_item["utterances"] = utterances
+    if characters_in_scene is not None:
+        render_item["characters_in_scene"] = characters_in_scene
     provider_prompt = render_storyboard_video_prompt(
         prompt,
-        {"utterances": utterances} if has_utterances else None,
+        render_item or None,
         content_mode=content_mode,
         voice_characters=voice_characters if isinstance(voice_characters, dict) else None,
     )
     files = [("storyboard", storyboard_image)]
     if end_frame_image is not None:
         files.append(("end_frame", end_frame_image))
+    files.extend((f"reference_image_{index}", path) for index, path in enumerate(reference_images))
     return _build_video_visual_basis(
         "storyboard",
         semantics={

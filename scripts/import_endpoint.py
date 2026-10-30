@@ -6,10 +6,10 @@
 
 端点 key 格式：ce-{custom_endpoint.id}
 """
+
 import json
 import sqlite3
-import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 DB_PATH = "projects/arcreel.db"
 DEFINITION_PATH = "YZ_H3_wenwu_comfyui_endpoint.json"
@@ -18,8 +18,9 @@ MODEL_ID = "MiniMax H3 文武双全 Ref2VA 终极版"
 PROVIDER_ID = 1  # ComfyUI (192.168.110.90)
 ENTRY_BINDING = "minimax/MiniMax-H3"
 
+
 def main():
-    with open(DEFINITION_PATH, "r", encoding="utf-8") as f:
+    with open(DEFINITION_PATH, encoding="utf-8") as f:
         definition = json.load(f)
 
     conn = sqlite3.connect(DB_PATH)
@@ -46,12 +47,12 @@ def main():
                 definition["schema_version"],
                 definition["media_type"],
                 DISPLAY_NAME,
-                datetime.now(timezone.utc).isoformat(),
+                datetime.now(UTC).isoformat(),
                 endpoint_id,
             ),
         )
     else:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         cur.execute(
             """INSERT INTO custom_endpoint
                (definition, kind, schema_version, media_type, display_name, created_at, updated_at)
@@ -80,11 +81,9 @@ def main():
     existing_model = cur.fetchone()
 
     # 能力覆盖：支持 1-15 秒时长
-    capability_overrides = json.dumps(
-        {"durations": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]}
-    )
+    capability_overrides = json.dumps({"durations": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]})
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     if existing_model:
         print(f"模型记录已存在: id={existing_model['id']}, 更新...")
         cur.execute(
@@ -119,7 +118,9 @@ def main():
         (endpoint_key,),
     )
     row = cur.fetchone()
-    print(f"模型验证: id={row['id']} provider={row['provider_id']} model={row['model_id']} endpoint={row['endpoint']} enabled={row['is_enabled']}")
+    print(
+        f"模型验证: id={row['id']} provider={row['provider_id']} model={row['model_id']} endpoint={row['endpoint']} enabled={row['is_enabled']}"
+    )
     print(f"  capability_overrides: {row['capability_overrides']}")
 
     # 列出所有端点

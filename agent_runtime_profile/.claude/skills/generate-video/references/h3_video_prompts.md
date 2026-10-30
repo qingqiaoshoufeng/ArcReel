@@ -1,244 +1,145 @@
 # H3 视频提示词写作指南
 
-面向 MiniMax H3 视频端点的 `video_prompt` 写作规则。ArcReel 在请求构造时由
-`lib/prompts/h3_prompt.py` 把这里产出的 YAML 投影成 H3 原生三段式
-（`integrated_multimodal_description` / `overall_soundscape` / `non_diegetic_music`）+
-关键帧对齐指令行。投影只识别 YAML 结构；自由散文式 prompt **不会被投影**，直通模型，
-原生三段式不生效，质量显著下降。
+面向 MiniMax H3 视频端点。`lib/prompts/h3_prompt.py` 在最终请求构造时，将视频 YAML 或参考生视频机器文本投影成六字段。非 H3 输入模型保持原有结构，自由文本原样透传。
 
-> 写作原则沿用 MiniMax 官方 `h3-prompt-writing` skill 的 `references/base-en.txt`，
-> 本指南只补充 ArcReel 投影逻辑强约束的部分。
+## 1. 最终六字段
 
-## 1. 必须产出 YAML 结构
+按以下顺序组织 H3 原生提示词，关键帧对齐指令可以放在字段之前：
 
-LLM 产出的 `video_prompt` 必须是 YAML，键序固定：
-
-```yaml
-Voice_Profiles:                # 有对白才出现；每个说话人一行
-  - Speaker: 徐凤年
-    Voice_Style: 清朗少年音
-Action: |                       # 主体描述，按镜头分段
-  [Shot 1] ...
-Camera_Motion: Push In          # 必须在词表内（见 §3）
-Ambiance_Audio: |               # 环境声/动作声/非语言人声，1-4 句
-  ...
-Dialogue:                       # 有对白才出现
-  - Speaker: 徐凤年
-    Line: ...
-```
-
-任一字段缺失或写成散文，`h3_prompt.py` 的 `_parse_structured_body` 返回 `None`，
-正文原样透传给 H3 模型，三段式投影失效。
-
-## 2. Action：动作 / 画面主体
-
-按镜头分段，每镜一段。每镜按下列七维度展开，**逐项可见可听**，不要写成剧情梗概：
-
-1. **构图**：镜头类型（medium-wide shot / close-up / extreme close-up）
-2. **主体外观与位置**：角色登记名、年龄感、发型、服饰色、签名道具、当前站位
-3. **环境与光照**：场景、关键道具、光源（侧逆光 / 霓虹绿 / 漫散射）
-4. **动作与状态变化**：具体动作动词（攥紧 / 踉跄后退 / 抬眼望向），不要 "interacts with"
-5. **摄影机运动**：写进 `Camera_Motion` 字段；如要在 Action 里点明运镜目的，用
-   "The camera pushes in toward the folded letter in her hands." 这类自然句
-6. **当前声音**：画内声（对白、歌词、画内乐器、画内收音机）写在 Action 里
-7. **引用内容出现点**：参考图、参考视频在镜中首次出现的位置（参见生成端 Reference_Images 行）
-
-### 2.1 镜头编号与切换
-
-- `[Shot 1]` 无时间戳，是开场
-- 后续镜用 `[Shot N] At 00:03.500, the camera cuts to ...`，cut 时间在视频时长内严格递增
-- 普通切换用 `the camera cuts to` / `the shot cuts to` / `the shot transitions to`
-- `cross-dissolve` / `fade` / `wipe` 仅在用户显式要求时使用
-
-### 2.2 禁用抽象词
-
-H3 文本编码器对抽象形容词响应弱。**禁止**：`cinematic`、`beautiful`、`stunning`、
-`gorgeous`、`epic`、`atmospheric`、`breathtaking`。
-
-改写示例：
-
-- ❌ `A cinematic beautiful sunset over a stunning city.`
-- ✅ `A wide shot frames a low sun casting long shadows across slate rooftops; the western sky holds saturated orange above indigo bands. Sunlight catches the dust on the rooftop railings.`
-
-### 2.3 时长对齐
-
-描述时长须铺满编排秒数：
-
-- 4 秒镜不要写 30 秒动作链
-- 多镜切换时所有 cut 时间相加 ≤ 视频总时长
-- `h3_prompt.py` 会自动追加 `The shot lasts {duration:.2f} seconds in total.` 声明句，
-  不要在 Action 里再写"持续 X 秒"
-
-### 2.4 关键帧衔接（I2VA，分镜图生视频的核心模式）
-
-分镜图在 H3 I2VA 模式下是 [Shot 1] 的 0.00 秒首帧。Action 必须遵循：
-
-**首帧锚定 → 动作起始 → 连续发展 → 结果或反应**
-
-- 首句先建立分镜图已有的风格、主体、构图、场景锚定
-- 再写从首帧向前的动作路径
-- 角色身份、服饰、颜色、关键道具、空间关系保持一致
-
-参考结构（来自 base-en.txt §3.1）：
-
-```
-[Shot 1] <风格>, <镜头类型>, 分镜图中的<主体>保持<外观/服饰/站位/场景布局>。
-<动作起始>。<连续发展>。<结果或反应>。镜头<运镜>。
-```
-
-### 2.5 分镜间末态承接
-
-每个分镜的 `ending_state` 字段记录该镜结束时主体定格状态（位置 / 姿态 / 手中物件 / 表情 / 环境状态）。`ending_state` 不进 YAML 的 Action 段，只存在于剧本 JSON，供下一镜 action 起始状态衔接使用。
-
-非首镜且未标记 `segment_break` 的分镜，Action 首句应锚定上一镜 `ending_state` 的定格状态，再展开新动作。这与 I2VA 的首帧锚定模式并行：
-
-- **首帧锚定**（§2.4）：Action 首句锚定分镜图已有的风格 / 主体 / 构图
-- **末态承接**：Action 首句锚定上一镜 ending_state 的定格状态
-
-例如上一镜 `ending_state` 写「林清停在门口，右手扶门框」，本镜 Action 起始写：
-```
-[Shot 1] The woman releases the doorframe and turns toward the desk, ...
-```
-而非凭空从「端坐桌前」开始。
-
-`segment_break = true` 处断开承接链（新场景，无需衔接上一镜末态），`ending_state` 仍需写，供同段后续分镜承接。
-
-### 2.6 屏内文字
-
-画面里可见的招牌、字幕、霓虹文字用英文双引号包裹原文，不翻译：
-
-```
-A red neon sign reading "营业中" glows above the doorway.
-```
-
-## 3. Camera_Motion：镜头运动
-
-必须在 [h3_prompt.py `_CAMERA_SENTENCES`](../../../../../lib/prompts/h3_prompt.py) 词表内，
-否则投影写不出官方句式，模型收到的运镜描述失真：
-
-| 值 | 投影为 |
+| 字段 | 内容与来源 |
 |---|---|
-| `Static` | The camera holds a static shot. |
-| `Pan Left` / `Pan Right` | The camera pans left / right. |
-| `Tilt Up` / `Tilt Down` | The camera tilts up / down. |
-| `Zoom In` / `Zoom Out` | The camera zooms in / out. |
-| `Push In` / `Pull Out` | The camera pushes in / pulls out. |
-| `Truck Left` / `Truck Right` | The camera trucks left / right. |
-| `Pedestal Up` / `Pedestal Down` | The camera pedestals up / down. |
-| `Orbit` | The camera moves in an arc shot around the subject. |
-| `Tracking Shot` | The camera tracks the moving subject. |
-| `Shake` | The camera shakes slightly. |
+| `subject_definitions` | 有可靠参考绑定的主体定义，格式为 `<Subject N> is {现有主体标签} from <Picture N>.`。不得虚构身份、服饰、颜色等外观信息。无可靠主体来源时写 `N/A`。 |
+| `summary` | 基于已有动作或正文概述，不补写情节；机械投影可直接复用已有正文。 |
+| `retention_analysis` | 按 `<Subject N>` 汇总正文显式引用到的 `[Shot N]`，使用 `appears in` 列出镜头，以 `fully_preserved - {主体标签} from <Picture N>, {从已有画面资料复述的外观}, retained as {角色或形态描述}.` 表达生成约束；外观只复述参考图或正文已有的身份、服饰与角色信息，不编造未提供的细节。没有可靠信息时写 `N/A`。 |
+| `detailed_description` | 完整镜头描述、动作、运镜、对白、时间戳及音色。 |
+| `overall_soundscape` | 已有环境声、动作声、非语言人声；缺省 `N/A`。 |
+| `non_diegetic_music` | 默认 `N/A`；用户明确要求配乐时可写其音乐意图。不得自行添加配乐。 |
 
-- 无运镜时填 `Static`，不要留空
-- 幅度与速度（base-en.txt §4.3 的 `with small amplitude at slow speed`）写进 Action
-  自然句里，不要塞进 `Camera_Motion` 字段
+完整六字段输入原样透传。旧三字段输入会将 `integrated_multimodal_description` 迁移到 `detailed_description`，保留已有声音、音乐和关键帧对齐说明。仅在自由文本中提到字段名称不会触发迁移。
 
-## 4. Ambiance_Audio：环境声 / 动作声 / 非语言人声
+首帧、尾帧均是完整画面，不能因为存在 `<Picture 1>` 就将它解释为单一角色。分镜图生视频没有独立主体绑定时，`subject_definitions` 和 `retention_analysis` 可以为 `N/A`，关键帧对齐说明仍保留。
 
-1-4 句英文，连续段落，覆盖三类：
+## 2. 视频 YAML 输入
 
-- **环境声**：风声、雨声、交通声、机器轰鸣
-- **物理动作声**：脚步声、布料摩擦声、撞击声、纸张翻动声
-- **非语言人声**：呼吸、笑声、喘息、叹息
-
-**对白、歌词、画内音乐归入 Action**，不在 Ambiance_Audio 重复。
-
-完全静音时写 `N/A`（仅当用户明确要求全片静默）。
-
-```
-Ambiance_Audio: |
-  Steady rain taps against the café windows while low room ambience continues
-  underneath. The entrance bell rings once, followed by wet footsteps and the
-  soft scrape of a chair.
-```
-
-## 5. Dialogue：对白
-
-每行 `Speaker` + `Line`：
-
-- `Speaker` 用角色登记名（与剧本 `characters_in_scene` 等字段一致），
-  `h3_prompt.py` 按首次出现顺序分配 `(S1)` `(S2)` 稳定 ID
-- `Line` **逐字保留台词原文**，不要翻译、改写或增删标点
-- 画外音：Action 里写 `says in an off-screen voiceover`，对白仍走 Dialogue
-- 台词跨镜：在 Action 里加 `<scenetrans>` 标注衔接点；台词被视频末尾截断用 `<cutoff>`
-
-```
-Dialogue:
-  - Speaker: 徐凤年
-    Line: 我下站就下车。
-  - Speaker: 路人甲
-    Line: 等等我！
-```
-
-## 6. Voice_Profiles：音色声明
-
-每个说话角色一行 `Speaker` + `Voice_Style`：
-
-- `Voice_Style` 给出音色线索（清朗少年音 / 低沉男声 / 沙哑老妇 / 紧绷的女声）
-- 仅在有对白的镜出现
-- 不在 Action / Ambiance_Audio 里重复音色描述
-
-```
-Voice_Profiles:
-  - Speaker: 徐凤年
-    Voice_Style: 清朗少年音
-  - Speaker: 路人甲
-    Voice_Style: 喘息的少年声
-```
-
-## 7. 不要写的内容
-
-- **视频时长**（如 "8 秒"）——`h3_prompt.py` 自动追加时长声明句
-- **宽高比**（如 "16:9"、"9:16"）——API 参数设置，不进 prompt
-- **BGM 描述**——ArcReel 视频排除项禁 BGM，`non_diegetic_music` 恒为 `N/A`，
-  不要在 Action / Ambiance_Audio 里写背景乐
-- **字幕 / 水印禁止项**——生成端在 prompt 末尾自动追加，不要重复
-- **否定句式**——不要写 "no walls"、"without text"，直接列出要保留的内容
-
-## 8. 完整示例（I2VA 分镜图生视频，4 秒）
-
-分镜图：少年立于雨后青石巷口，手持折纸船。
+继续使用已有输入字段，非 H3 数据模型不增加六字段：
 
 ```yaml
 Voice_Profiles:
-  - Speaker: 少年
+  - Speaker: 徐凤年
     Voice_Style: 清朗少年音
 Action: |
-  [Shot 1] Stylized 3D cartoon render, medium-wide shot. The boy shown in the
-  reference image retains his bowl-cut hair, slate-blue raincoat, and stance at
-  the rain-soaked bluestone alley mouth. He crouches and places the folded paper
-  boat into a shallow puddle; the boat drifts forward along the current. The boy
-  straightens and lifts his gaze toward the far end of the alley as the camera
-  trucks right with small amplitude at slow speed, following the drifting boat.
-  Rain drips from the eaves; the boy (S1) says: "走吧，去看看它要漂到哪去。"
-Camera_Motion: Truck Right
+  [Shot 1] 中景。徐凤年立在巷口，向前迈步。
+  [Shot 2] At 00:03.500, the camera cuts to 手中折纸船的特写。
+Camera_Motion: Push In
 Ambiance_Audio: |
-  Rain drips in scattered taps from tile eaves onto the puddle, accompanied by
-  the soft splash of the paper boat's hull and the boy's quiet breathing.
+  雨滴敲打瓦檐，脚步踏过积水。
 Dialogue:
-  - Speaker: 少年
+  - Speaker: 徐凤年
     Line: 走吧，去看看它要漂到哪去。
 ```
 
-投影后 H3 模型收到：
+投影识别含非空 `Action` 的 YAML 映射。对白和音色字段可省略；缺少 `Action` 或无法解析为该结构时原样透传。分镜图生成的 `@[资产]` 绑定标记不进入 H3 提示词：投影把 `@[X]` 剥成普通名字 `X`，视频 YAML 里直接写普通名字。
 
+Action 每镜一段，写清构图、已有主体外观和位置、环境光照、动作变化、声音出现点及参考内容。外观只能来自已有资料或画面信息，不能为补齐字段而编造。
+
+- 保留已有 `[Shot N]` 分段及时间戳，不重复添加 `[Shot 1]`。
+- 后续镜可用 `[Shot N] At 00:03.500, the camera cuts to ...`，切换时间递增且不超过总时长。
+- 普通切换使用 `cuts to` 或 `transitions to`；淡入淡出、叠化等只在用户要求时使用。
+- 动作规模与时长匹配。投影自动追加时长声明，不必重复。
+- 使用具体可见、可听的动作与细节，避免 `cinematic`、`beautiful`、`stunning` 等抽象形容词。
+- 屏内文字用英文双引号包裹原文，不翻译。
+
+### 2.1 首尾帧与角色图并存（混合）
+
+端点的参考图槽序为「首帧、尾帧、角色图」时（如文武双全 Ref2VA：槽 0=首帧、槽 1=尾帧、
+槽 2-8=角色设定图），分镜正文前置角色绑定行 `<老黄>@图片1、<徐凤年>@图片2。`。绑定行由
+渲染层按分镜 `characters_in_scene` 序机械拼装，图号是逻辑号（从 1 起）；混合投影按本次
+请求携带的关键帧数把绑定号前移（首帧占 Picture 1、尾帧占 Picture 2、角色从 Picture 3
+起），正文 `<名字>` 标记替换为 `<Subject N>`，对白 Speaker 同编号，retention 按镜汇总，
+关键帧对齐说明锚 Picture 1/2。角色一致性由参考图本体保证，正文不复述外观也不虚构。
+没有参考图槽的端点剥除绑定行与 `<名字>` 标记，退化为普通首尾帧投影。
+
+## 3. 参考生视频主体与多形态
+
+参考渲染器提供 `<名字>@图片N` 绑定。图号来自随请求发送的参考图顺序，投影不重新编号：
+
+```text
+<徐凤年>@图片1、<徐凤年/劲装>@图片2。
+<徐凤年>与<徐凤年/劲装>是同一角色的不同形态，各自按对应参考图呈现。
+[Shot 1] <徐凤年>拔剑。
+[Shot 2] At 00:03.500, <徐凤年/劲装>说 {走。}
 ```
-For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
 
-integrated_multimodal_description: [Shot 1] Stylized 3D cartoon render, medium-wide shot. The boy shown in the reference image retains his bowl-cut hair, slate-blue raincoat, and stance at the rain-soaked bluestone alley mouth. He crouches and places the folded paper boat into a shallow puddle; the boat drifts forward along the current. The boy straightens and lifts his gaze toward the far end of the alley as the camera trucks right with small amplitude at slow speed, following the drifting boat. Rain drips from the eaves; the boy (S1) says: <d>[Chinese] 走吧，去看看它要漂到哪去。</d> The shot lasts 4.00 seconds in total.
+对应六字段示意：
 
-overall_soundscape: Rain drips in scattered taps from tile eaves onto the puddle, accompanied by the soft splash of the paper boat's hull and the boy's quiet breathing.
+```text
+subject_definitions: <Subject 1> is 徐凤年 from <Picture 1>.
+<Subject 2> is 徐凤年/劲装 from <Picture 2>.
+<Subject 1> and <Subject 2> show different appearances of the same character; each follows its own reference picture.
+
+summary: [Shot 1] <Subject 1>拔剑。
+[Shot 2] At 00:03.500, <Subject 2>（S1）说：<d>[Chinese] 走。</d>
+
+retention_analysis: <Subject 1> (appears in [Shot 1]): fully_preserved - 徐凤年 from <Picture 1>, retained as shown in the reference picture.
+<Subject 2> (appears in [Shot 2]): fully_preserved - 徐凤年/劲装 from <Picture 2>, retained as shown in the reference picture.
+
+detailed_description: [Shot 1] <Subject 1>拔剑。
+[Shot 2] At 00:03.500, <Subject 2>（S1）说：<d>[Chinese] 走。</d>
+
+overall_soundscape: N/A
 
 non_diegetic_music: N/A
 ```
 
-## 9. 自检清单
+定义、正文、对白、多形态声明及 retention 均使用 `<Subject N>`，图片引用使用 `<Picture N>`。多形态仍分别对应自己的参考图，并保留同角色声明。没有图像绑定的主体保留 `<名字>` 标签，不虚构编号。
 
-- [ ] `video_prompt` 是 YAML，含 `Action` 键
-- [ ] `Camera_Motion` 在词表内
-- [ ] 无 `cinematic` / `beautiful` / `stunning` 等抽象词
-- [ ] 描述时长与编排秒数匹配
-- [ ] 分镜图生视频首句锚定分镜图主体外观与场景
-- [ ] `ending_state` 已写（首镜 / segment_break 可留空），下一镜 action 起始状态与之衔接
-- [ ] 对白逐字保留原文，Speaker 用登记名
-- [ ] 无时长数字、无宽高比、无 BGM 描述、无字幕/水印禁止项
+retention 按主体汇总正文中的显式主体记号，镜头去重并按正文原顺序排列。例如，同一主体在两镜中被显式引用时写 `<Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - 徐凤年 from <Picture 1>, retained as shown in the reference picture.`。`fully_preserved` 表达生成约束，不是已生成视频的核验结果。`appears in` 表示正文显式引用：画外音也可能显式引用主体，因此不要求主体可见出镜，保留要求也不要求画外主体出镜。外观描述复述参考图或正文已有的身份、服饰与角色信息，不编造未提供的细节。未在正文显式引用的主体不列入 retention；不根据全局绑定表、代词或猜测推断出镜，也不补写动作或身份。
+
+## 4. 关键帧与分镜承接
+
+分镜图生视频遵循“首帧锚定 → 动作起始 → 连续发展 → 结果或反应”。首句建立画面已有的构图、风格、人物与场景关系，再展开动作。
+
+首帧对齐 0.00 秒，尾帧对齐本次请求的有效时长。首尾帧组合分别对齐两个时刻；这些对齐说明描述完整画面，不构成角色定义。
+
+每镜 `ending_state` 记录结束位置、姿态、手持物、表情及环境状态。该字段保留在剧本 JSON，不进入 YAML。非首镜且无 `segment_break` 时，Action 起始状态承接上一镜末态；新场景可断开承接链。
+
+## 5. 运镜
+
+`Camera_Motion` 使用现有词表：
+
+| 值 | 动作 |
+|---|---|
+| `Static` | 固定镜头 |
+| `Pan Left` / `Pan Right` | 左右摇摄 |
+| `Tilt Up` / `Tilt Down` | 上下俯仰 |
+| `Zoom In` / `Zoom Out` | 变焦推近或拉远 |
+| `Push In` / `Pull Out` | 推进或后拉 |
+| `Truck Left` / `Truck Right` | 左右横移 |
+| `Pedestal Up` / `Pedestal Down` | 升降 |
+| `Orbit` | 环绕 |
+| `Tracking Shot` | 跟拍 |
+| `Shake` | 轻微晃动 |
+
+无运镜时填 `Static`。幅度、速度和运镜目的写进 Action。词表外值会使用通用句式投影。
+
+## 6. 声音、对白与音乐
+
+`Ambiance_Audio` 用简洁段落描述环境声、物理动作声和非语言人声。对白、歌词及画内音乐的出现点写在 Action；不要在多个位置重复完整台词。
+
+`Dialogue` 的 `Speaker` 使用角色登记名，`Line` 逐字保留原文、标点和语言。投影按首次发言顺序分配稳定的 `（S1）`、`（S2）`，中文对白包在 `<d>[Chinese] …</d>` 中。参考生视频的说话主体同时使用对应 Subject 编号。
+
+`Voice_Profiles` 的 `Voice_Style` 保留音色、语速和情绪线索。参考文本中的声音特征也会保留；`@音频N` 绑定本身不下发，因为此 ComfyUI H3 端点没有音频输入。
+
+画外音在 Action 中标明 `says in an off-screen voiceover`。台词跨镜可用 `<scenetrans>`，末尾截断可用 `<cutoff>`。
+
+背景音乐默认 `N/A`。用户明确要求音乐时，可在完整原生六字段的 `non_diegetic_music` 中写明；投影保留已有原生或旧三字段中的音乐。不要为此给非 H3 输入模型添加字段。
+
+## 7. 自检
+
+- 最终 H3 结构包含六字段，缺少可靠来源的内容为 `N/A`。
+- `<Subject N>` 编号与 `<Picture N>` 绑定一致，多形态与音色未丢失。
+- retention 按主体列出正文显式引用的镜头和保留约束，`appears in` 不将画外音引用声称为可见出镜，外观只复述已有资料，不虚构或宣称已核验生成结果。
+- 首尾帧作为完整画面对齐，不强行定义单一角色。
+- Shot 分段、时间戳、台词和中文标签保留，无重复开场编号。
+- 运镜、动作规模及切换时刻与视频时长匹配。
+- 不重复写宽高比、字幕或水印禁止项；音乐仅来自用户明确意图。
